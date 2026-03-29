@@ -485,8 +485,8 @@ Press START only if you accept these risks.""",
         self._params.put_bool("DoReboot", True)
 
     content = "<h1>Reboot Required</h1><br><p>This change requires a reboot to take effect.</p>"
-    dlg = ConfirmDialog(content, "Reboot", cancel_text="Ignore", rich=True)
-    gui_app.set_modal_overlay(dlg, callback=confirm_callback)
+    dlg = ConfirmDialog(content, "Reboot", cancel_text="Ignore", rich=True, callback=confirm_callback)
+    gui_app.push_widget(dlg)
 
   def _on_emergency_disable(self):
     def confirm_callback(result: int):
@@ -500,8 +500,8 @@ Press START only if you accept these risks.""",
       + "<p>This will disable the pedal interceptor and clear calibration. "
       + "You will need to restart the device for changes to take effect.</p>"
     )
-    dlg = ConfirmDialog(content, "Disable", rich=True)
-    gui_app.set_modal_overlay(dlg, callback=confirm_callback)
+    dlg = ConfirmDialog(content, "Disable", rich=True, callback=confirm_callback)
+    gui_app.push_widget(dlg)
 
   def _on_reset_defaults(self):
     def confirm_callback(result: int):
@@ -514,8 +514,8 @@ Press START only if you accept these risks.""",
       + "<p>This will reset all NAP settings to their factory default values. "
       + "This action cannot be undone.</p>"
     )
-    dlg = ConfirmDialog(content, "Reset All", rich=True)
-    gui_app.set_modal_overlay(dlg, callback=confirm_callback)
+    dlg = ConfirmDialog(content, "Reset All", rich=True, callback=confirm_callback)
+    gui_app.push_widget(dlg)
 
   def _reset_all_to_defaults(self):
     """Write default value for each NAP param."""
