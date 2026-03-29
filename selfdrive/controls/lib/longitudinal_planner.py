@@ -54,8 +54,10 @@ class LongitudinalPlanner:
     self.dt = dt
     self.allow_throttle = True
 
+    self._is_preap = (CP.brand == "tesla" and CP.carFingerprint == "TESLA_MODEL_S_PREAP"
+                       and CP.openpilotLongitudinalControl and not CP.pcmCruise)
     self._params = Params()
-    self.nap_follow_dist = self._params.get("NAPFollowDistance", return_default=True)
+    self.nap_follow_dist = self._params.get("NAPFollowDistance", return_default=True) if self._is_preap else None
     self._frame = 0
 
     self.a_desired = init_a
@@ -90,7 +92,7 @@ class LongitudinalPlanner:
 
   def update(self, sm):
     self._frame += 1
-    if self._frame % 20 == 0:
+    if self._is_preap and self._frame % 20 == 0:
       self.nap_follow_dist = self._params.get("NAPFollowDistance", return_default=True)
 
     if len(sm['carControl'].orientationNED) == 3:
