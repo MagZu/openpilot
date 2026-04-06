@@ -20,6 +20,3 @@ if [ -z "$AGNOS_VERSION" ]; then
 fi
 
 export STAGING_ROOT="/data/safe_staging"
-
-# Force Pre-AP Tesla fingerprint — this branch is Pre-AP specific
-export FINGERPRINT="TESLA_MODEL_S_PREAP"

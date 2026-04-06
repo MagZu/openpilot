@@ -133,7 +133,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     // NAP (NotAutopilot) Pre-AP Tesla params
     {"NAPBrakeFactor", {PERSISTENT, FLOAT, "1.0"}},
     {"NAPFollowDistance", {PERSISTENT, INT, "4"}},
-    {"NAPForcePreAP", {PERSISTENT, BOOL}},
+    {"NAPForcePreAP", {PERSISTENT, BOOL, "1"}},
     {"NAPiBoosterEnabled", {PERSISTENT, BOOL}},
     {"NAPPedalCalibDone", {PERSISTENT, BOOL}},
     {"NAPPedalCalibFactor", {PERSISTENT, FLOAT, "1.0"}},
