@@ -65,6 +65,10 @@ def manager_init() -> None:
   params.put_bool("IsReleaseBranch", build_metadata.release_channel)
   params.put("HardwareSerial", serial)
 
+  # NAP: ensure Pre-AP fingerprint is forced on first boot
+  if params.get("NAPForcePreAP") is None:
+    params.put_bool("NAPForcePreAP", True)
+
   # set dongle id
   reg_res = register(show_spinner=True)
   if reg_res:
