@@ -204,10 +204,6 @@ def finalize_update() -> None:
 
 
 def handle_agnos_update() -> None:
-  # C3_BLOCK_AGNOS: prevent AGNOS update which softbricks the Comma 3
-  import os as _c3os
-  if _c3os.path.exists("/data/no_agnos_update"):
-    return
   from openpilot.system.hardware.tici.agnos import flash_agnos_update, get_target_slot_number
 
   cur_version = HARDWARE.get_os_version()
