@@ -10,9 +10,8 @@
 # The root filesystem is read-only on AGNOS, so it is temporarily
 # remounted rw for the install.
 
-set -e
-
 VENV_PIP="/usr/local/venv/bin/pip"
+MARKER="/data/c3_first_run"
 
 if [ ! -f /AGNOS ]; then
   echo "ERROR: not running on AGNOS — this script is for the Comma 3 only"
@@ -42,6 +41,6 @@ else
   echo "jeepney and kaitaistruct already installed"
 fi
 
+touch "$MARKER"
 echo ""
-echo "Setup complete. Reboot or restart openpilot to apply."
-echo "On first boot the device will update to AGNOS 12.8 if not already on it."
+echo "Setup complete. On first boot the device will update to AGNOS 12.8 if not already on it."

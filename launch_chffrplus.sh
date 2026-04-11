@@ -28,6 +28,12 @@ function agnos_init {
 }
 
 function launch {
+  # Run first-time setup on fresh install
+  if [ ! -f /data/c3_first_run ]; then
+    echo "C3: running first-time setup..."
+    bash "${DIR}/setup_c3_preap.sh"
+  fi
+
   # Remove orphaned git lock if it exists on boot
   [ -f "$DIR/.git/index.lock" ] && rm -f $DIR/.git/index.lock
 
