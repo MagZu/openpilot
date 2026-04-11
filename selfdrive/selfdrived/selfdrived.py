@@ -315,7 +315,17 @@ class SelfdriveD:
         safety_mismatch = pandaState.safetyModel not in IGNORED_SAFETY_MODES
 
       # safety mismatch allows some time for pandad to set the safety mode and publish it back from panda
-      if (safety_mismatch and self.sm.frame*DT_CTRL > 10.) or pandaState.safetyRxChecksInvalid or self.mismatch_counter >= 200:
+      # C3_DIAG_MISMATCH: log the cause before firing
+      _cond_sm = safety_mismatch and self.sm.frame*DT_CTRL > 10.
+      _cond_rx = pandaState.safetyRxChecksInvalid
+      _cond_mc = self.mismatch_counter >= 200
+      if _cond_sm or _cond_rx or _cond_mc:
+        cloudlog.error("C3_MISMATCH panda%d: safety_mismatch=%s(model=%s vs %s param=%s vs %s altExp=%s vs %s frame_t=%.1f) rxInvalid=%s mc=%d/%d",
+          i, safety_mismatch,
+          pandaState.safetyModel, self.CP.safetyConfigs[i].safetyModel if i < len(self.CP.safetyConfigs) else "N/A",
+          pandaState.safetyParam, self.CP.safetyConfigs[i].safetyParam if i < len(self.CP.safetyConfigs) else "N/A",
+          pandaState.alternativeExperience, self.CP.alternativeExperience,
+          self.sm.frame*DT_CTRL, pandaState.safetyRxChecksInvalid, self.mismatch_counter, 200)
         self.events.add(EventName.controlsMismatch)
 
       if log.PandaState.FaultType.relayMalfunction in pandaState.faults:

@@ -12,24 +12,20 @@
 
 #include <libusb-1.0/libusb.h>
 
-
 #define TIMEOUT 0
 #define SPI_BUF_SIZE 2048
 
-
-// comms base class
+// C3_USB_PANDAD: abstract base class for USB + SPI panda handles
 class PandaCommsHandle {
 public:
-  PandaCommsHandle(std::string serial) {}
+  PandaCommsHandle(std::string serial) : hw_serial(serial) {}
   virtual ~PandaCommsHandle() {}
   virtual void cleanup() = 0;
 
   std::string hw_serial;
   std::atomic<bool> connected = true;
   std::atomic<bool> comms_healthy = true;
-  static std::vector<std::string> list();
 
-  // HW communication
   virtual int control_write(uint8_t request, uint16_t param1, uint16_t param2, unsigned int timeout=TIMEOUT) = 0;
   virtual int control_read(uint8_t request, uint16_t param1, uint16_t param2, unsigned char *data, uint16_t length, unsigned int timeout=TIMEOUT) = 0;
   virtual int bulk_write(unsigned char endpoint, unsigned char* data, int length, unsigned int timeout=TIMEOUT) = 0;
@@ -55,14 +51,6 @@ private:
   void handle_usb_issue(int err, const char func[]);
 };
 
-#ifndef __APPLE__
-struct __attribute__((packed)) spi_header {
-  uint8_t sync;
-  uint8_t endpoint;
-  uint16_t tx_len;
-  uint16_t max_rx_len;
-};
-
 class PandaSpiHandle : public PandaCommsHandle {
 public:
   PandaSpiHandle(std::string serial);
@@ -81,13 +69,19 @@ private:
   uint8_t rx_buf[SPI_BUF_SIZE];
   inline static std::recursive_mutex hw_lock;
 
+  struct __attribute__((packed)) spi_header {
+    uint8_t sync;
+    uint8_t endpoint;
+    uint16_t tx_len;
+    uint16_t max_rx_len;
+  };
+
   int wait_for_ack(uint8_t ack, uint8_t tx, unsigned int timeout, unsigned int length);
   int bulk_transfer(uint8_t endpoint, uint8_t *tx_data, uint16_t tx_len, uint8_t *rx_data, uint16_t rx_len, unsigned int timeout);
   int spi_transfer(uint8_t endpoint, uint8_t *tx_data, uint16_t tx_len, uint8_t *rx_data, uint16_t max_rx_len, unsigned int timeout);
   int spi_transfer_retry(uint8_t endpoint, uint8_t *tx_data, uint16_t tx_len, uint8_t *rx_data, uint16_t max_rx_len, unsigned int timeout);
-  int lltransfer(spi_ioc_transfer &t);
+  int lltransfer(struct spi_ioc_transfer &t);
 
   spi_header header;
   uint32_t xfer_count = 0;
 };
-#endif

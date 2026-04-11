@@ -1,4 +1,5 @@
-#include "selfdrive/pandad/panda.h"
+// C3_USB_PANDAD: PandaUsbHandle implementation (ported from openpilot 0.10.2)
+#include "selfdrive/pandad/panda_comms.h"
 
 #include <cassert>
 #include <stdexcept>
@@ -137,7 +138,6 @@ void PandaUsbHandle::handle_usb_issue(int err, const char func[]) {
     LOGE("lost connection");
     connected = false;
   }
-  // TODO: check other errors, is simply retrying okay?
 }
 
 int PandaUsbHandle::control_write(uint8_t bRequest, uint16_t wValue, uint16_t wIndex, unsigned int timeout) {
@@ -184,8 +184,6 @@ int PandaUsbHandle::bulk_write(unsigned char endpoint, unsigned char* data, int 
 
   std::lock_guard lk(hw_lock);
   do {
-    // Try sending can messages. If the receive buffer on the panda is full it will NAK
-    // and libusb will try again. After 5ms, it will time out. We will drop the messages.
     err = libusb_bulk_transfer(dev_handle, endpoint, data, length, &transferred, timeout);
 
     if (err == LIBUSB_ERROR_TIMEOUT) {
@@ -213,7 +211,7 @@ int PandaUsbHandle::bulk_read(unsigned char endpoint, unsigned char* data, int l
     err = libusb_bulk_transfer(dev_handle, endpoint, data, length, &transferred, timeout);
 
     if (err == LIBUSB_ERROR_TIMEOUT) {
-      break; // timeout is okay to exit, recv still happened
+      break;
     } else if (err == LIBUSB_ERROR_OVERFLOW) {
       comms_healthy = false;
       LOGE_100("overflow got 0x%x", transferred);

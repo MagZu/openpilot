@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+# C3_NO_AGNOS: AGNOS updater disabled on Comma 3 (flag: /data/no_agnos_update)
+if [ -f /data/no_agnos_update ]; then
+  echo "C3: AGNOS updater disabled (/data/no_agnos_update exists)"
+  exit 0
+fi
+
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null && pwd )"
 

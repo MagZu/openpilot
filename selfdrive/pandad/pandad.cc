@@ -1,3 +1,4 @@
+// C3_SKIP_CANFD: nap-release already handles F4/DOS, no patch needed
 #include "selfdrive/pandad/pandad.h"
 
 #include <algorithm>
