@@ -6,11 +6,34 @@ import time
 import signal
 import subprocess
 
+import json
+
 from panda import Panda, PandaDFU, PandaProtocolMismatch, McuType, FW_PATH
 from openpilot.common.basedir import BASEDIR
 from openpilot.common.params import Params
 from openpilot.system.hardware import HARDWARE
 from openpilot.common.swaglog import cloudlog
+
+_F4_BUILD_SH = os.path.join(BASEDIR, "panda", "F4", "build.sh")
+_F4_CONFIG = os.path.join(BASEDIR, "panda", "F4", "config.json")
+_F4_FW_PATH = os.path.join(BASEDIR, "panda", "board", "obj", "panda.bin.signed")
+
+
+def f4_auto_compile_if_needed() -> None:
+  try:
+    with open(_F4_CONFIG) as f:
+      cfg = json.load(f)
+    if not cfg.get("auto_compile", False):
+      return
+    if not os.path.exists(_F4_FW_PATH):
+      cloudlog.info("F4 firmware missing, auto-compiling via panda/F4/build.sh...")
+      result = subprocess.run(["bash", _F4_BUILD_SH], capture_output=True, text=True)
+      if result.returncode != 0:
+        cloudlog.error(f"F4 auto-compile failed:\n{result.stderr}")
+      else:
+        cloudlog.info("F4 auto-compile complete")
+  except Exception:
+    cloudlog.exception("f4_auto_compile_if_needed failed")
 
 
 def get_expected_signature(panda=None) -> bytes:
@@ -88,6 +111,9 @@ def main() -> None:
   process = None
   do_exit = False
   signal.signal(signal.SIGINT, signal_handler)
+
+  # C3_F4_PANDA: build F4 firmware on first boot if auto_compile is set in panda/F4/config.json
+  f4_auto_compile_if_needed()
 
   count = 0
   first_run = True
