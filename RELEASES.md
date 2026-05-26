@@ -1,3 +1,9 @@
+Version 0.11.2 (2026-05-26)
+========================
+* Tinkla Buddy IC support: lane / target-speed / road-sign / lead-car
+  overlay on stock Tesla MS cluster (requires Buddy R2S hardware via
+  EtherCAN bridge on Tesla OBD port)
+
 Version 0.11.1 (2026-04-08)
 ========================
 * New driver monitoring model

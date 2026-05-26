@@ -227,7 +227,18 @@ class NAPLayout(Widget):
     self._brake_factor_buttons.action_item.set_enabled(False)
     self._all_items.append(self._brake_factor_buttons)
 
-    # ── Section 5: Advanced ──
+    # ── Section 5: Tinkla Buddy IC ──
+    self._all_items.append(section_header_item("Tinkla Buddy IC"))
+
+    self._add_toggle(
+      NAPParamKeys.TINKLA_IC_INTEGRATION,
+      "Tinkla Buddy IC Integration",
+      "Render openpilot path, lanes and lead-car on the Tesla Instrument Cluster "
+      "via Tinkla Buddy. Only enable if you have a Tinkla Buddy installed with a "
+      "valid license. Display-only, has no effect on engage or safety.",
+    )
+
+    # ── Section 6: Advanced ──
     self._all_items.append(section_header_item("Advanced"))
 
     # Force Pre-AP is always on for now — grayed out in the ON position
@@ -239,7 +250,7 @@ class NAPLayout(Widget):
       enabled=False,
     )
 
-    # ── Section 6: Actions ──
+    # ── Section 7: Actions ──
     self._all_items.append(section_header_item("Actions"))
 
     self._backup_epas_btn = button_item(
