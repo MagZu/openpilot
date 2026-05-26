@@ -134,6 +134,10 @@ class NAPLayoutMici(NavScroller):
     ibooster_enabled = BigParamControl("ibooster enabled", NAPParamKeys.IBOOSTER_ENABLED)
     ibooster_enabled.set_enabled(False)
 
+    # ── Tinkla Buddy IC ──────────────────────────────
+    tinkla_ic_integration = BigParamControl(
+      "tinkla buddy ic integration", NAPParamKeys.TINKLA_IC_INTEGRATION)
+
     # ── Advanced (locked on) ─────────────────────────
     force_pre_ap = BigParamControl("force pre-ap mode", NAPParamKeys.FORCE_PRE_AP)
     force_pre_ap.set_enabled(False)
@@ -174,6 +178,7 @@ class NAPLayoutMici(NavScroller):
       calibrate_radar_btn,
       test_radar_btn,
       ibooster_enabled,
+      tinkla_ic_integration,
       force_pre_ap,
       backup_epas_btn,
       flash_epas_btn,
