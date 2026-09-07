@@ -44,6 +44,8 @@ class MockMADS:
 class TestMADSStateMachine:
   @pytest.fixture(autouse=True)
   def setup_method(self, mocker: MockerFixture):
+    # Synthetic event 0 must not replace lkasEnable for later tests.
+    mocker.patch.dict(EVENTS_SP)
     self.mads = MockMADS(mocker)
     self.state_machine = StateMachine(self.mads)
     self.events = self.mads.selfdrive.events

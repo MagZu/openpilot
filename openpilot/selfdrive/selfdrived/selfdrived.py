@@ -314,9 +314,16 @@ class SelfdriveD(CruiseHelper):
           self.events.add(EventName.pcmEnable)
 
       # Disable on rising edge of accelerator or brake. Also disable on brake when speed > 0
-      if (CS.gasPressed and not self.CS_prev.gasPressed and self.disengage_on_accelerator) or \
-        (CS.brakePressed and (not self.CS_prev.brakePressed or not CS.standstill)) or \
-        (CS.regenBraking and (not self.CS_prev.regenBraking or not CS.standstill)):
+      # Pre-AP pedal: NAP FSM drops long on brake and keeps lat. Generic pedalPressed
+      # USER_DISABLE would also kill OP. Real brakePressed still feeds FCW/regen/MADS.
+      preap_pedal = (self.CP.brand == "tesla"
+                     and self.CP.carFingerprint == "TESLA_MODEL_S_PREAP"
+                     and self.CP.openpilotLongitudinalControl
+                     and not self.CP.pcmCruise)
+      gas_pressed = CS.gasPressed and not self.CS_prev.gasPressed and self.disengage_on_accelerator
+      brake_pressed = (not preap_pedal) and CS.brakePressed and (not self.CS_prev.brakePressed or not CS.standstill)
+      regen_pressed = CS.regenBraking and (not self.CS_prev.regenBraking or not CS.standstill)
+      if gas_pressed or brake_pressed or regen_pressed:
         self.events.add(EventName.pedalPressed)
 
     # Create events for temperature, disk space, and memory
@@ -489,12 +496,13 @@ class SelfdriveD(CruiseHelper):
 
     if not REPLAY:
       # Check for mismatch between openpilot and car's PCM.
-      # Pre-AP Tesla manages cruiseState.enabled via software FSM (not hardware PCM),
-      # so treat it the same as pcmCruise for this check.
-      preap_sw_cruise = (self.CP.brand == "tesla" and self.CP.carFingerprint == "TESLA_MODEL_S_PREAP"
-                         and self.CP.openpilotLongitudinalControl and not self.CP.pcmCruise)
-      effective_pcm_cruise = self.CP.pcmCruise or preap_sw_cruise
-      cruise_mismatch = CS.cruiseState.enabled and (not self.enabled or not effective_pcm_cruise)
+      # Pedal Pre-AP: cruiseState.enabled is lateral (first pull). Compare
+      # enableLongControl so lat-only does not look like a stuck PCM.
+      preap_pedal = (self.CP.brand == "tesla" and self.CP.carFingerprint == "TESLA_MODEL_S_PREAP"
+                     and self.CP.openpilotLongitudinalControl and not self.CP.pcmCruise)
+      effective_pcm_cruise = self.CP.pcmCruise or preap_pedal
+      pcm_on = bool(getattr(CS, "enableLongControl", False)) if preap_pedal else CS.cruiseState.enabled
+      cruise_mismatch = pcm_on and (not self.enabled or not effective_pcm_cruise)
       self.cruise_mismatch_counter = self.cruise_mismatch_counter + 1 if cruise_mismatch else 0
       if self.cruise_mismatch_counter > int(6. / DT_CTRL):
         self.events.add(EventName.cruiseMismatch)

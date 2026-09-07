@@ -331,12 +331,20 @@ class ModularAssistiveDrivingSystem:
 
       if self.block_unified_engagement_mode():
         self.events.remove(EventName.pcmEnable)
-        self.events.remove(EventName.buttonEnable)
+        # Pre-AP long request is buttonEnable from Longitudinal.enable.
+        # UEM-off still blocks pcmEnable (lat pull) but must not swallow long.
+        if not is_preap_platform(self.CP):
+          self.events.remove(EventName.buttonEnable)
     else:
       # Stateful MAIN only. Momentary Pre-AP must not treat cruiseState.available as a stalk.
       if self.main_enabled_toggle and not self.no_main_cruise:
         if CS.cruiseState.available and not self.selfdrive.CS_prev.cruiseState.available:
           self.events_sp.add(EventNameSP.lkasEnable)
+
+    if is_preap_platform(self.CP):
+      # Long-only disable is buttonCancel. OP already consumed it this frame.
+      # Leave MADS lat up unless lkasDisable / hard events say otherwise.
+      self.events.remove(EventName.buttonCancel)
 
     for be in CS.buttonEvents:
       if be.type == ButtonType.cancel:

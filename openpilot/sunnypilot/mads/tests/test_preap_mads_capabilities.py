@@ -10,8 +10,9 @@ from openpilot.sunnypilot.mads.helpers import (
   set_car_specific_params,
 )
 from opendbc.safety import ALTERNATIVE_EXPERIENCE
-from openpilot.cereal import custom
+from openpilot.cereal import log, custom
 
+EventName = log.OnroadEvent.EventName
 EventNameSP = custom.OnroadEventSP.EventName
 
 
@@ -206,6 +207,48 @@ class TestPreAPMadsCapabilities(unittest.TestCase):
     mads.read_params()
     self.assertFalse(mads.unified_engagement_mode)
 
+  def test_preap_uem_off_keeps_button_enable_strips_pcm_enable(self):
+    from openpilot.sunnypilot.mads.mads import ModularAssistiveDrivingSystem
+    from openpilot.selfdrive.selfdrived.events import Events
+    from openpilot.sunnypilot.selfdrive.selfdrived.events import EventsSP
+
+    CP = structs.CarParams()
+    CP.brand = "tesla"
+    CP.carFingerprint = "TESLA_MODEL_S_PREAP"
+    CP_SP = structs.CarParamsSP()
+    CP_SP.madsCapabilityContractVersion = 1
+    CP_SP.madsRequired = True
+    CP_SP.madsMainCruiseInputKind = structs.CarParamsSP.MadsMainCruiseInputKind.momentary
+    CP_SP.madsUnifiedEngagementMode = False
+
+    params = MagicMock()
+    params.get_bool.side_effect = lambda k: k == "Mads"
+    sd = MagicMock()
+    sd.CP = CP
+    sd.CP_SP = CP_SP
+    sd.params = params
+    sd.events = Events()
+    sd.events_sp = EventsSP()
+    sd.enabled = False
+    sd.enabled_prev = False
+    sd.initialized = True
+    prev = structs.CarState()
+    prev.cruiseState.available = True
+    sd.CS_prev = prev
+    sd.sm = {"pandaStates": []}
+
+    mads = ModularAssistiveDrivingSystem(sd)
+    self.assertTrue(mads.block_unified_engagement_mode())
+
+    cs = structs.CarState()
+    cs.cruiseState.available = True
+    sd.events.add(EventName.pcmEnable)
+    sd.events.add(EventName.buttonEnable)
+    sd.events.add(EventName.buttonCancel)
+    mads.update_events(cs)
+    self.assertFalse(sd.events.has(EventName.pcmEnable))
+    self.assertTrue(sd.events.has(EventName.buttonEnable))
+    self.assertFalse(sd.events.has(EventName.buttonCancel))
 
 if __name__ == "__main__":
   unittest.main()

@@ -162,3 +162,82 @@ def test_pedal_acquisition_failure_keeps_lateral_and_surfaces_alert():
 
     event_types = EVENTS[EventName.pedalUnavailable]
     assert set(event_types) == {ET.WARNING}
+
+
+def test_preap_pedal_first_pull_does_not_pcm_enable():
+  cp = _make_cp(pcm_cruise=False, op_long=True)
+  cs_prev = _make_cs()
+  cs = _make_cs()
+  cs.cruiseState.enabled = True
+  with patch(NAP_CONF_PATH, new_callable=PropertyMock, return_value=True):
+    events = CarSpecificEvents(cp).update(cs, cs_prev, car.CarControl.new_message())
+  assert EventName.pcmEnable not in events.names
+  assert EventName.pcmDisable not in events.names
+
+
+def test_preap_pedal_idle_does_not_pcm_disable():
+  cp = _make_cp(pcm_cruise=False, op_long=True)
+  with patch(NAP_CONF_PATH, new_callable=PropertyMock, return_value=True):
+    events = CarSpecificEvents(cp).update(_make_cs(), _make_cs(), car.CarControl.new_message())
+  assert EventName.pcmDisable not in events.names
+  assert EventName.pcmEnable not in events.names
+
+
+def test_preap_nopedal_first_pull_still_pcm_enables():
+  cp = _make_cp(pcm_cruise=True, op_long=False)
+  cs_prev = _make_cs()
+  cs = _make_cs()
+  cs.cruiseState.enabled = True
+  with patch(NAP_CONF_PATH, new_callable=PropertyMock, return_value=True):
+    events = CarSpecificEvents(cp).update(cs, cs_prev, car.CarControl.new_message())
+  assert EventName.pcmEnable in events.names
+
+
+def test_preap_nopedal_idle_still_pcm_disables():
+  cp = _make_cp(pcm_cruise=True, op_long=False)
+  with patch(NAP_CONF_PATH, new_callable=PropertyMock, return_value=True):
+    events = CarSpecificEvents(cp).update(_make_cs(), _make_cs(), car.CarControl.new_message())
+  assert EventName.pcmDisable in events.names
+
+
+def test_preap_pedal_cancel_button_still_user_disables():
+  cp = _make_cp(pcm_cruise=False, op_long=True)
+  cs = _make_cs()
+  cs.cruiseState.enabled = True
+  be = car.CarState.ButtonEvent.new_message()
+  be.type = car.CarState.ButtonEvent.Type.cancel
+  be.pressed = True
+  cs.buttonEvents = [be]
+  with patch(NAP_CONF_PATH, new_callable=PropertyMock, return_value=True):
+    events = CarSpecificEvents(cp).update(cs, _make_cs(), car.CarControl.new_message())
+  assert EventName.buttonCancel in events.names
+
+
+def test_preap_pedal_stalk_adjust_is_not_enable_or_cancel():
+  cp = _make_cp(pcm_cruise=False, op_long=True)
+  cs_prev = _make_cs()
+  cs_prev.cruiseState.enabled = True
+  cs = _make_cs()
+  cs.cruiseState.enabled = True
+  cs.enableLongControl = True
+  be = car.CarState.ButtonEvent.new_message()
+  be.type = car.CarState.ButtonEvent.Type.accelCruise
+  be.pressed = True
+  cs.buttonEvents = [be]
+  with patch(NAP_CONF_PATH, new_callable=PropertyMock, return_value=True):
+    events = CarSpecificEvents(cp).update(cs, cs_prev, car.CarControl.new_message())
+  assert EventName.pcmEnable not in events.names
+  assert EventName.buttonEnable not in events.names
+  assert EventName.buttonCancel not in events.names
+
+
+def test_preap_pedal_permanent_steer_fault_is_immediate_disable():
+  cp = _make_cp(pcm_cruise=False, op_long=True)
+  cs = _make_cs()
+  cs.cruiseState.enabled = True
+  cs.enableLongControl = True
+  cs.steerFaultPermanent = True
+  with patch(NAP_CONF_PATH, new_callable=PropertyMock, return_value=True):
+    events = CarSpecificEvents(cp).update(cs, _make_cs(), car.CarControl.new_message())
+  assert EventName.steerUnavailable in events.names
+  assert ET.IMMEDIATE_DISABLE in EVENTS[EventName.steerUnavailable]

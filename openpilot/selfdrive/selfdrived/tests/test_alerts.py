@@ -4,7 +4,7 @@ import os
 import random
 from PIL import Image, ImageDraw, ImageFont
 
-from openpilot.cereal import log
+from openpilot.cereal import custom, log
 from opendbc.car.structs import car
 from openpilot.cereal.messaging import SubMaster
 from openpilot.common.basedir import BASEDIR
@@ -12,6 +12,7 @@ from openpilot.common.params import Params
 from openpilot.common.realtime import DT_CTRL
 from openpilot.selfdrive.selfdrived.events import Alert, EVENTS, ET, AudibleAlert
 from openpilot.selfdrive.selfdrived.alertmanager import set_offroad_alert
+from openpilot.selfdrive.selfdrived.selfdrived import SelfdriveD
 from openpilot.selfdrive.test.process_replay.process_replay import CONFIGS
 
 AlertSize = log.SelfdriveState.AlertSize
@@ -185,3 +186,95 @@ class TestAlerts:
       written_alert = params.get(a)
       assert "a"*i == written_alert['extra']
       assert alert["text"] == written_alert['text']
+
+
+
+
+EventName = log.OnroadEvent.EventName
+_MISMATCH_FRAMES = int(6. / DT_CTRL) + 1
+
+
+def _preap_selfdrived(*, pcm_cruise=False, op_long=True):
+  cp = car.CarParams.new_message()
+  cp.brand = "tesla"
+  cp.carFingerprint = "TESLA_MODEL_S_PREAP"
+  cp.openpilotLongitudinalControl = op_long
+  cp.pcmCruise = pcm_cruise
+  sd = SelfdriveD(cp, custom.CarParamsSP.new_message())
+  sd.initialized = True
+  sd.startup_event = None
+  return sd
+
+
+def _cs(*, cruise_enabled=False, enable_long=False, brake=False, gas=False,
+        regen=False, can_valid=True):
+  cs = car.CarState.new_message()
+  cs.canValid = can_valid
+  cs.cruiseState.available = True
+  cs.cruiseState.enabled = cruise_enabled
+  cs.enableLongControl = enable_long
+  cs.brakePressed = brake
+  cs.gasPressed = gas
+  cs.regenBraking = regen
+  cs.gearShifter = car.CarState.GearShifter.drive
+  return cs
+
+
+class TestPreAPSelfdriveUpdateEvents:
+  def test_lat_only_does_not_cruise_mismatch_after_six_seconds(self):
+    sd = _preap_selfdrived()
+    sd.enabled = False
+    cs = _cs(cruise_enabled=True, enable_long=False)
+    for _ in range(_MISMATCH_FRAMES):
+      sd.update_events(cs)
+    assert EventName.cruiseMismatch not in sd.events.names
+
+  def test_long_intent_without_host_still_cruise_mismatch(self):
+    sd = _preap_selfdrived()
+    sd.enabled = False
+    cs = _cs(cruise_enabled=True, enable_long=True)
+    for _ in range(_MISMATCH_FRAMES):
+      sd.update_events(cs)
+    assert EventName.cruiseMismatch in sd.events.names
+
+  def test_brake_telemetry_does_not_generic_user_disable(self):
+    sd = _preap_selfdrived()
+    sd.CS_prev = _cs(cruise_enabled=True, enable_long=True)
+    cs = _cs(cruise_enabled=True, enable_long=True, brake=True)
+    sd.update_events(cs)
+    assert EventName.pedalPressed not in sd.events.names
+
+  def test_pedal_cruise_enabled_on_long_rising_with_gas_not_on_release(self):
+    sd = _preap_selfdrived()
+    sd.update_events(_cs(cruise_enabled=True, enable_long=False, gas=True))
+    assert EventName.pedalCruiseEnabled not in sd.events.names
+    sd.CS_prev = _cs(cruise_enabled=True, enable_long=False, gas=True)
+    sd.update_events(_cs(cruise_enabled=True, enable_long=True, gas=True))
+    assert EventName.pedalCruiseEnabled in sd.events.names
+    sd.CS_prev = _cs(cruise_enabled=True, enable_long=True, gas=True)
+    sd.update_events(_cs(cruise_enabled=True, enable_long=True, gas=False))
+    assert EventName.pedalCruiseEnabled not in sd.events.names
+    assert EventName.pedalCruiseDisabled not in sd.events.names
+
+  def test_gas_rising_still_generic_pedal_pressed(self):
+    sd = _preap_selfdrived()
+    sd.disengage_on_accelerator = True
+    sd.CS_prev = _cs()
+    cs = _cs(gas=True)
+    sd.update_events(cs)
+    assert EventName.pedalPressed in sd.events.names
+
+  def test_regen_still_generic_pedal_pressed(self):
+    sd = _preap_selfdrived()
+    sd.CS_prev = _cs()
+    cs = _cs(regen=True)
+    sd.update_events(cs)
+    assert EventName.pedalPressed in sd.events.names
+
+  def test_pcm_preap_still_mismatches_on_cruise_state_enabled(self):
+    sd = _preap_selfdrived(pcm_cruise=True, op_long=False)
+    sd.enabled = False
+    cs = _cs(cruise_enabled=True, enable_long=False)
+    for _ in range(_MISMATCH_FRAMES):
+      sd.update_events(cs)
+    assert EventName.cruiseMismatch in sd.events.names

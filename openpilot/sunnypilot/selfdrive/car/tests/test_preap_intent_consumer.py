@@ -1,16 +1,27 @@
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from openpilot.cereal import custom, log
 from opendbc.car import structs
+from opendbc.car.car_helpers import interfaces
+from opendbc.car.common.conversions import Conversions as CV
+import opendbc.car.tesla.preap.nap_conf as nap_conf_mod
+from opendbc.car.tesla.preap.nap_params import NAPParamKeys
+from openpilot.common.params import Params
+from openpilot.common.prefix import OpenpilotPrefix
 from openpilot.selfdrive.selfdrived.events import Events
 from openpilot.sunnypilot.selfdrive.selfdrived.events import EventsSP
+from openpilot.selfdrive.car.car_specific import CarSpecificEvents
 from openpilot.sunnypilot.selfdrive.car.car_specific import CarSpecificEventsSP
 from opendbc.car.tesla.preap.sp.platform import preap_radar_present
 from opendbc.sunnypilot.car.tesla.values import TeslaFlagsSP
 from opendbc.car.tesla.preap.sp.carstate import PreAPCarState
-from opendbc.car.tesla.values import CAR
+from opendbc.car.tesla.values import CAR, CruiseButtons
 from openpilot.selfdrive.car.helpers import convert_to_capnp
+from openpilot.selfdrive.selfdrived.preap_regen import PreAPChimeState, update_preap_chimes
+from openpilot.selfdrive.selfdrived.state import StateMachine as OPStateMachine
+from openpilot.sunnypilot.mads.mads import ModularAssistiveDrivingSystem
 from openpilot.sunnypilot.selfdrive.car.preap_intent import (
   PreAPIntentConsumer, UINT32_HALF, UINT32_MASK, sequence_is_newer,
 )
@@ -348,6 +359,216 @@ class TestPreAPIntentConsumer(unittest.TestCase):
     cs._publish_mads_intent(hold, structs.CarState())
     self.assertEqual(hold.preapIntentSequence, ret_sp.preapIntentSequence)
     self.assertEqual(hold.preapLateralIntent, structs.CarStateSP.PreapLateralIntent.mainCruiseRequest)
+
+
+OPState = log.SelfdriveState.OpenpilotState
+
+
+class TestPedalLongitudinalHostFlow(unittest.TestCase):
+  def setUp(self):
+    self.enterContext(OpenpilotPrefix())
+    params = Params()
+    params.put_bool(NAPParamKeys.PEDAL_ENABLED, True, block=True)
+    params.put_bool(NAPParamKeys.RADAR_ENABLED, True, block=True)
+    params.put_bool(NAPParamKeys.PEDAL_CALIB_DONE, True, block=True)
+    params.put(NAPParamKeys.PEDAL_CALIB_FACTOR, 0.95, block=True)
+    params.put_bool("Mads", True, block=True)
+    self.enterContext(patch.object(nap_conf_mod, "_PARAMS_AVAILABLE", True))
+    self.enterContext(patch.object(nap_conf_mod, "_params", params))
+
+    CarInterface = interfaces[CAR.TESLA_MODEL_S_PREAP]
+    fingerprint_buses = {bus: {} for bus in range(8)}
+    self.CP = CarInterface.get_params(
+      CAR.TESLA_MODEL_S_PREAP, fingerprint_buses, [],
+      alpha_long=False, is_release=False, docs=False,
+    )
+    self.CP_SP = CarInterface.get_params_sp(
+      self.CP, CAR.TESLA_MODEL_S_PREAP, fingerprint_buses, [],
+      alpha_long=False, is_release_sp=False, docs=False,
+    )
+
+    self.cse = CarSpecificEvents(self.CP)
+    self.sp = CarSpecificEventsSP(self.CP, self.CP_SP)
+    self.adapter = PreAPCarState(self.CP, self.CP_SP)
+    self.adapter.engagement.enableDoublePull = True
+    self.adapter.engagement.double_pull_window_ms = 750
+    seed = structs.CarStateSP()
+    self.adapter._publish_mads_intent(seed)
+    self.cs_sp = convert_to_capnp(seed)
+    self.sp.update(structs.CarState(), Events(), self.cs_sp)
+
+    self.events = Events()
+    self.events_sp = EventsSP()
+    self.op_sm = OPStateMachine()
+    self.cc = structs.CarControl()
+    self.cs_prev = self._cs()
+    self.chimes_prev = PreAPChimeState()
+    self.sd = SimpleNamespace(
+      CP=self.CP,
+      CP_SP=self.CP_SP,
+      params=params,
+      events=self.events,
+      events_sp=self.events_sp,
+      enabled=False,
+      enabled_prev=False,
+      initialized=True,
+      cs_fresh=True,
+      CS_prev=self.cs_prev,
+      sm={"pandaStates": []},
+      state_machine=self.op_sm,
+    )
+    self.mads = ModularAssistiveDrivingSystem(self.sd)
+
+  def _pull(self, button, prev, t_ms, brake=False):
+    return self.adapter.engagement.process_buttons(
+      button, prev, t_ms, 20.0, "KPH", True, True, True, brake,
+    )
+
+  def _cs(self, gas=False, buttons=None):
+    cs = structs.CarState()
+    cs.cruiseState.available = True
+    cs.cruiseState.enabled = bool(self.adapter.engagement.cruiseEnabled)
+    cs.enableLongControl = bool(self.adapter.engagement.enableLongControl)
+    cs.gearShifter = structs.CarState.GearShifter.drive
+    cs.gasPressed = gas
+    cs.vEgo = 20.0
+    if cs.enableLongControl:
+      cs.cruiseState.speed = self.adapter.engagement.pedal_speed_kph * CV.KPH_TO_MS
+    else:
+      cs.cruiseState.speed = 1e-3
+    if buttons:
+      cs.buttonEvents = buttons
+    return cs
+
+  def _publish(self):
+    ret_sp = structs.CarStateSP()
+    self.adapter._publish_mads_intent(ret_sp)
+    self.cs_sp = convert_to_capnp(ret_sp)
+
+  def _tick(self, cs):
+    self.events.clear()
+    self.events_sp.clear()
+    common = self.cse.update(cs, self.cs_prev, self.cc)
+    self.events.add_from_msg(common.to_msg())
+    extra_sp = self.sp.update(cs, self.events, self.cs_sp)
+    self.events_sp.add_from_msg(extra_sp.to_msg())
+    op_enabled, _ = self.op_sm.update(self.events)
+    self.sd.enabled = bool(op_enabled)
+    self.sd.CS_prev = self.cs_prev
+    pre = Events()
+    pre.add_from_msg(self.events.to_msg())
+    pre_sp = EventsSP()
+    pre_sp.add_from_msg(self.events_sp.to_msg())
+    self.mads.update(cs)
+    chimes, self.chimes_prev = update_preap_chimes(
+      lat_engaged=bool(cs.cruiseState.enabled),
+      long_engaged=bool(cs.enableLongControl),
+      prev=self.chimes_prev,
+    )
+    self.cs_prev = cs
+    self.sd.enabled_prev = bool(op_enabled)
+    return pre, pre_sp, op_enabled, chimes
+
+  def _first_pull(self, gas=False):
+    buttons = self._pull(CruiseButtons.MAIN, CruiseButtons.IDLE, 1000)
+    self._publish()
+    return self._tick(self._cs(gas=gas, buttons=buttons))
+
+  def _second_pull(self, gas=True):
+    buttons = self._pull(CruiseButtons.MAIN, CruiseButtons.IDLE, 1500)
+    self._publish()
+    return self._tick(self._cs(gas=gas, buttons=buttons))
+
+  def test_first_pull_enables_mads_not_openpilot_long(self):
+    events, events_sp, op_enabled, chimes = self._first_pull(gas=True)
+    self.assertTrue(self.adapter.engagement.cruiseEnabled)
+    self.assertFalse(self.adapter.engagement.enableLongControl)
+    self.assertFalse(events.has(EventName.pcmEnable))
+    self.assertFalse(events.has(EventName.buttonEnable))
+    self.assertTrue(events_sp.has(EventNameSP.lkasEnable))
+    self.assertFalse(op_enabled)
+    self.assertTrue(self.mads.enabled)
+    self.assertFalse(chimes.long_engage)
+
+  def test_double_pull_gas_held_latches_long_and_set_speed(self):
+    self._first_pull(gas=True)
+    events, events_sp, op_enabled, chimes = self._second_pull(gas=True)
+    self.assertTrue(self.adapter.engagement.enableLongControl)
+    self.assertFalse(events.has(EventName.pcmEnable))
+    self.assertTrue(events.has(EventName.buttonEnable))
+    self.assertTrue(self.sd.events.has(EventName.buttonEnable))
+    self.assertTrue(op_enabled)
+    self.assertEqual(self.op_sm.state, OPState.overriding)
+    self.assertTrue(events.has(EventName.gasPressedOverride))
+    self.assertTrue(chimes.long_engage)
+    self.assertAlmostEqual(self.adapter.engagement.pedal_speed_kph, 72.0)
+
+  def test_gas_release_stays_enabled_without_new_long_chime(self):
+    self._first_pull(gas=True)
+    self._second_pull(gas=True)
+    events, _, op_enabled, chimes = self._tick(self._cs(gas=False))
+    self.assertTrue(self.adapter.engagement.enableLongControl)
+    self.assertTrue(op_enabled)
+    self.assertEqual(self.op_sm.state, OPState.enabled)
+    self.assertFalse(chimes.long_engage)
+    self.assertFalse(chimes.long_disengage)
+    self.assertFalse(events.has(EventName.buttonEnable))
+
+  def test_stalk_hold_adjusts_target_without_enable_events(self):
+    self._first_pull(gas=True)
+    self._second_pull(gas=True)
+    speed0 = self.adapter.engagement.pedal_speed_kph
+    buttons = self._pull(CruiseButtons.RES_ACCEL, CruiseButtons.IDLE, 1600)
+    self.assertGreater(self.adapter.engagement.pedal_speed_kph, speed0)
+    speed1 = self.adapter.engagement.pedal_speed_kph
+    hold = self._pull(CruiseButtons.RES_ACCEL_2ND, CruiseButtons.RES_ACCEL, 1700)
+    self.assertGreater(self.adapter.engagement.pedal_speed_kph, speed1)
+    events, _, op_enabled, chimes = self._tick(self._cs(gas=True, buttons=buttons + hold))
+    self.assertTrue(op_enabled)
+    self.assertFalse(events.has(EventName.pcmEnable))
+    self.assertFalse(events.has(EventName.buttonCancel))
+    self.assertFalse(chimes.long_engage)
+
+  def test_brake_drops_long_keeps_mads(self):
+    self._first_pull(gas=True)
+    self._second_pull(gas=True)
+    self._tick(self._cs(gas=False))
+    self._pull(CruiseButtons.IDLE, CruiseButtons.IDLE, 2000, brake=True)
+    self.assertTrue(self.adapter.engagement.cruiseEnabled)
+    self.assertFalse(self.adapter.engagement.enableLongControl)
+    self._publish()
+    events, events_sp, op_enabled, chimes = self._tick(self._cs(gas=False))
+    self.assertTrue(events.has(EventName.buttonCancel))
+    self.assertFalse(self.sd.events.has(EventName.buttonCancel))
+    self.assertFalse(events_sp.has(EventNameSP.lkasDisable))
+    self.assertFalse(op_enabled)
+    self.assertTrue(self.mads.enabled)
+    self.assertTrue(chimes.long_disengage)
+
+  def test_cancel_full_exit(self):
+    self._first_pull()
+    self._second_pull(gas=False)
+    buttons = self._pull(CruiseButtons.CANCEL, CruiseButtons.IDLE, 3000)
+    self.assertFalse(self.adapter.engagement.cruiseEnabled)
+    self.assertFalse(self.adapter.engagement.enableLongControl)
+    self._publish()
+    events, events_sp, op_enabled, chimes = self._tick(self._cs(buttons=buttons))
+    self.assertTrue(events.has(EventName.buttonCancel))
+    self.assertTrue(events_sp.has(EventNameSP.lkasDisable))
+    self.assertFalse(op_enabled)
+    self.assertFalse(self.mads.enabled)
+    self.assertTrue(chimes.long_disengage)
+
+  def test_hard_fault_exits_both(self):
+    self._first_pull()
+    self._second_pull(gas=False)
+    cs = self._cs()
+    cs.steerFaultPermanent = True
+    events, _, op_enabled, _ = self._tick(cs)
+    self.assertTrue(events.has(EventName.steerUnavailable))
+    self.assertFalse(op_enabled)
+    self.assertFalse(self.mads.enabled)
+
 
 if __name__ == "__main__":
   unittest.main()

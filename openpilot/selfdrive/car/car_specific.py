@@ -120,11 +120,9 @@ class CarSpecificEvents:
 
     CI = interfaces[self.CP.carFingerprint]
     # TODO: cleanup the honda-specific logic
-    # Pre-AP Tesla manages cruiseState.enabled via its own software FSM,
-    # so treat it the same as pcmCruise for the enable/disable event path.
-    preap_software_cruise = (self.CP.brand == "tesla" and self.CP.carFingerprint == "TESLA_MODEL_S_PREAP"
-                             and self.CP.openpilotLongitudinalControl and not self.CP.pcmCruise)
-    pcm_enable = (self.CP.pcmCruise and self.CP.brand != 'honda') or preap_software_cruise
+    # Pre-AP pedal cruiseState.enabled is lateral (first stalk pull).
+    # OP long follows NAP Longitudinal.enable → buttonEnable, not pcmEnable.
+    pcm_enable = self.CP.pcmCruise and self.CP.brand != 'honda'
     # TODO: on some hyundai cars, the cancel button is also the pause/resume button,
     # so only use it for cancel when running openpilot longitudinal
     allow_button_cancel = self.CP.brand != 'hyundai'

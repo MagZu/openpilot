@@ -18,9 +18,10 @@ from opendbc.car.can_definitions import CanData, CanRecvCallable, CanSendCallabl
 from opendbc.car.carlog import carlog
 from opendbc.car.fw_versions import ObdCallback
 from opendbc.car.car_helpers import get_car, interfaces
+from opendbc.car.tesla.values import CAR
 from opendbc.car.interfaces import CarInterfaceBase, RadarInterfaceBase
 from openpilot.selfdrive.pandad import can_capnp_to_list, can_list_to_can_capnp
-from openpilot.selfdrive.car.cruise import VCruiseHelper
+from openpilot.selfdrive.car.cruise import VCruiseHelper, V_CRUISE_UNSET
 from openpilot.selfdrive.car.helpers import convert_carControlSP, convert_to_capnp
 
 from openpilot.sunnypilot.mads.helpers import set_alternative_experience, set_car_specific_params
@@ -61,6 +62,22 @@ def can_comm_callbacks(logcan: messaging.SubSocket, sendcan: messaging.PubSocket
     sendcan.send(can_list_to_can_capnp(msgs, msgtype='sendcan'))
 
   return can_recv, can_send
+
+
+def startup_get_car(params: Params, can_recv: CanRecvCallable, can_send: CanSendCallable,
+                    set_obd_multiplexing: ObdCallback, alpha_long_allowed: bool, is_release: bool,
+                    cached_params, init_params_list_sp, is_release_sp: bool):
+  # An explicit environment selection takes precedence over the saved Pre-AP lock.
+  # Without the lock, leave discovery and SKIP_FW_QUERY unchanged.
+  fixed_fingerprint = None
+  skip_fw_query = None
+  if not os.environ.get("FINGERPRINT") and params.get_bool("NAPForcePreAP"):
+    fixed_fingerprint = CAR.TESLA_MODEL_S_PREAP
+    skip_fw_query = True
+  return get_car(can_recv, can_send, set_obd_multiplexing, alpha_long_allowed, is_release,
+                 cached_params=cached_params, fixed_fingerprint=fixed_fingerprint,
+                 init_params_list_sp=init_params_list_sp, is_release_sp=is_release_sp,
+                 skip_fw_query=skip_fw_query)
 
 
 class Car:
@@ -109,8 +126,9 @@ class Car:
 
       init_params_list_sp = sunnypilot_interfaces.initialize_params(self.params)
 
-      self.CI = get_car(*self.can_callbacks, obd_callback(self.params), alpha_long_allowed, is_release, cached_params,
-                        None, init_params_list_sp, is_release_sp)
+      self.CI = startup_get_car(self.params, *self.can_callbacks, obd_callback(self.params),
+                                alpha_long_allowed, is_release, cached_params,
+                                init_params_list_sp, is_release_sp)
       sunnypilot_interfaces.setup_interfaces(self.CI, self.params)
       self.RI = interfaces[self.CI.CP.carFingerprint].RadarInterface(self.CI.CP, self.CI.CP_SP)
       self.CP = self.CI.CP
@@ -230,33 +248,29 @@ class Car:
     if can_rcv_valid and REPLAY:
       self.can_log_mono_time = messaging.log_from_bytes(can_strs[0]).logMonoTime
 
-    try:
-      preap_software_cruise = (
-        self.CP.brand == "tesla"
-        and self.CP.carFingerprint == "TESLA_MODEL_S_PREAP"
-        and self.CP.openpilotLongitudinalControl
-        and not self.CP.pcmCruise
-      )
+    preap_software_cruise = (
+      self.CP.brand == "tesla"
+      and self.CP.carFingerprint == "TESLA_MODEL_S_PREAP"
+      and self.CP.openpilotLongitudinalControl
+      and not self.CP.pcmCruise
+    )
 
-      if not preap_software_cruise:
-        self.v_cruise_helper.update_speed_limit_assist(self.is_metric, self.sm['longitudinalPlanSP'])
-        self.v_cruise_helper.update_v_cruise(CS, self.sm['carControl'].enabled, self.is_metric)
-        if self.sm['carControl'].enabled and not self.CC_prev.enabled:
-          # Use CarState w/ buttons from the step selfdrived enables on
-          self.v_cruise_helper.initialize_v_cruise(self.CS_prev, self.experimental_mode, self.dynamic_experimental_control)
-      else:
-        # Pre-AP pedal mode owns set-speed in carstate via pedal_speed_kph.
-        # Keep planner target aligned to that software-managed target.
-        preap_v_cruise_kph = float(CS.cruiseState.speed * CV.MS_TO_KPH)
-        self.v_cruise_helper.v_cruise_kph_last = self.v_cruise_helper.v_cruise_kph
-        self.v_cruise_helper.v_cruise_kph = preap_v_cruise_kph
-        self.v_cruise_helper.v_cruise_cluster_kph = preap_v_cruise_kph
-    except Exception:
-      # Fail-safe: never crash card due cruise-target selection logic.
-      cloudlog.exception("Pre-AP software cruise target update failed, falling back to VCruiseHelper default")
+    if not preap_software_cruise:
+      self.v_cruise_helper.update_speed_limit_assist(self.is_metric, self.sm['longitudinalPlanSP'])
       self.v_cruise_helper.update_v_cruise(CS, self.sm['carControl'].enabled, self.is_metric)
       if self.sm['carControl'].enabled and not self.CC_prev.enabled:
+        # Use CarState w/ buttons from the step selfdrived enables on
         self.v_cruise_helper.initialize_v_cruise(self.CS_prev, self.experimental_mode, self.dynamic_experimental_control)
+    elif getattr(CS, "enableLongControl", False):
+      # NAP FSM owns set-speed via pedal_speed_kph once long is requested.
+      preap_v_cruise_kph = float(CS.cruiseState.speed * CV.MS_TO_KPH)
+      self.v_cruise_helper.v_cruise_kph_last = self.v_cruise_helper.v_cruise_kph
+      self.v_cruise_helper.v_cruise_kph = preap_v_cruise_kph
+      self.v_cruise_helper.v_cruise_cluster_kph = preap_v_cruise_kph
+    else:
+      self.v_cruise_helper.v_cruise_kph_last = self.v_cruise_helper.v_cruise_kph
+      self.v_cruise_helper.v_cruise_kph = V_CRUISE_UNSET
+      self.v_cruise_helper.v_cruise_cluster_kph = V_CRUISE_UNSET
 
     # TODO: mirror the carState.cruiseState struct?
     CS.vCruise = float(self.v_cruise_helper.v_cruise_kph)
