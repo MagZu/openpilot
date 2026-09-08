@@ -10,19 +10,43 @@ from __future__ import annotations
 import time
 
 from openpilot.common.params import Params
+from opendbc.car.common.conversions import Conversions as CV
 from opendbc.car.tesla.preap.pedal_feedback import PEDAL_TIMEOUT_MS
 from opendbc.car.tesla.preap.teslacan import GAS_COMMAND_ID, PEDAL_D, PEDAL_M1, TeslaCANPreAP
-from openpilot.sunnypilot.selfdrive.car.tesla.preap.tools.safety import parse_explicit_confirmation, require_preap_tool_start
-from openpilot.sunnypilot.selfdrive.car.tesla.preap.tools.transport import DiagnosticTransport, TransportError
+from openpilot.sunnypilot.selfdrive.car.tesla.preap.tools.runner import (
+  clear_tool_flags,
+  wait_for_manager_release,
+)
+from openpilot.sunnypilot.selfdrive.car.tesla.preap.tools.safety import (
+  STANDSTILL_SPEED_MS,
+  require_pedal_calibration_start,
+)
+from openpilot.sunnypilot.selfdrive.car.tesla.preap.tools.transport import (
+  PEDAL_CONNECT_DELAY,
+  PEDAL_CONNECT_RETRIES,
+  PREAP_FLAG_PEDAL_BUS_ZERO,
+  PREAP_FLAG_PEDAL_CALIBRATION,
+  SAFETY_TESLA_PREAP,
+  DiagnosticTransport,
+  TransportError,
+)
 
 GAS_SENSOR_ID = 0x552
 GTW_STATUS_ID = 0x348
 BRAKE_MESSAGE_ID = 0x20A
 DI_TORQUE1_ID = 0x108
 DI_TORQUE2_ID = 0x118
+ESP_B_ID = 0x155
 GEAR_NEUTRAL = 0x30
 MAX_PEDAL_ERRORS = 10
 SEND_RATE_MS = 20
+SOURCE_TIMEOUT_MS = 1000
+ESP_SPEED_SCALE = 0.01
+VEHICLE_CAN_BUS = 0
+BRAKE_APPLIED = 2
+BRAKE_NOT_APPLIED = 1
+
+
 
 
 def current_time_ms() -> int:
@@ -43,6 +67,15 @@ def unpack_can(msg):
   return None
 
 
+def esp_b_speed_ms(dat: bytes) -> float | None:
+  """ESP_vehicleSpeed. Same bytes as tesla_preap.h: data[5]<<8 | data[6]."""
+  if len(dat) < 7:
+    return None
+  raw = (dat[5] << 8) | dat[6]
+  return raw * ESP_SPEED_SCALE * CV.KPH_TO_MS
+
+
+
 class PedalCalibrationError(Exception):
   pass
 
@@ -51,8 +84,19 @@ def parse_configured_pedal_bus(value) -> int:
   """Preserve configured bus 0. Absent or empty defaults to 2."""
   if value is None or value == "" or value == b"":
     return 2
+  if isinstance(value, (bytes, bytearray)):
+    value = value.decode()
   return int(value)
 
+
+def parse_pedal_calibration_args(argv=None) -> tuple[bool, int | None]:
+  """--confirm plus optional --bus 0|2. Absent bus uses configured params."""
+  import argparse
+  parser = argparse.ArgumentParser(add_help=False)
+  parser.add_argument("--confirm", action="store_true", default=False)
+  parser.add_argument("--bus", type=int, choices=(0, 2), default=None)
+  args, _unknown = parser.parse_known_args(argv)
+  return bool(args.confirm), args.bus
 
 def build_pedal_command(accel_command: float, enable: int, bus: int, can: TeslaCANPreAP | None = None):
   can = can or TeslaCANPreAP(None)
@@ -79,19 +123,45 @@ def validate_calibration(min_v: float, max_v: float, factor: float, zero: float)
     raise PedalCalibrationError("default calibration is not a completed calibration")
 
 
-def persist_calibration(params: Params, *, min_v: float, max_v: float, factor: float, zero: float) -> None:
+def persist_calibration(params: Params, *, min_v: float, max_v: float, factor: float,
+                        zero: float, bus: int | None = None) -> None:
+  """Invalidate Done, write the set, then Done as the commit bit.
+
+  Params are not transactional. A failed or partial write is left invalid
+  (Done false). Bus and enable are not published until this commit.
+  """
   validate_calibration(min_v, max_v, factor, zero)
-  params.put("NAPPedalCalibMin", float(min_v), block=True)
-  params.put("NAPPedalCalibMax", float(max_v), block=True)
-  params.put("NAPPedalCalibFactor", float(factor), block=True)
-  params.put("NAPPedalCalibZero", float(zero), block=True)
-  params.put_bool("NAPPedalCalibDone", True, block=True)
-  params.put_bool("NAPPedalEnabled", True, block=True)
+  if bus is not None and bus not in (0, 2):
+    raise PedalCalibrationError("invalid pedal bus")
+  params.put_bool("NAPPedalCalibDone", False, block=True)
+  try:
+    params.put("NAPPedalCalibMin", float(min_v), block=True)
+    params.put("NAPPedalCalibMax", float(max_v), block=True)
+    params.put("NAPPedalCalibFactor", float(factor), block=True)
+    params.put("NAPPedalCalibZero", float(zero), block=True)
+    if bus is not None:
+      params.put("NAPPedalCanBus", int(bus), block=True)
+    params.put_bool("NAPPedalEnabled", True, block=True)
+    params.put_bool("NAPPedalCalibDone", True, block=True)
+  except Exception:
+    try:
+      params.put_bool("NAPPedalCalibDone", False, block=True)
+    except Exception:
+      pass
+    raise
+
 
 
 def send_safe_release(transport: DiagnosticTransport, bus: int, can: TeslaCANPreAP | None = None) -> None:
   addr, dat, out_bus = build_pedal_command(0.0, enable=0, bus=bus, can=can)
   transport.can_send(addr, dat, out_bus)
+
+
+def calibration_safety_param(bus: int) -> int:
+  param = PREAP_FLAG_PEDAL_CALIBRATION
+  if bus == 0:
+    param |= PREAP_FLAG_PEDAL_BUS_ZERO
+  return param
 
 
 class PedalCalibrator:
@@ -114,6 +184,9 @@ class PedalCalibrator:
     self.pedal_can = bus
     self.can = TeslaCANPreAP(None)
     self.can.pedal_can_bus = bus
+    self.expected_mode = SAFETY_TESLA_PREAP
+    self.expected_param = calibration_safety_param(bus)
+    self._watchdog_active = True
 
     self.rcv_pedal_idx = -1
     self.last_rcv_pedal_idx = -1
@@ -128,8 +201,15 @@ class PedalCalibrator:
 
     self.car_on = False
     self.brake_pressed = False
+    self.brake_valid = False
     self.gear_neutral = False
     self.di_gas = 0.0
+    self.speed_ms = 1e9
+    self.speed_seen_ms = 0
+    self.brake_seen_ms = 0
+    self.gear_seen_ms = 0
+    self.car_on_seen_ms = 0
+    self.accel_seen_ms = 0
 
     self.status = 0
     self.prev_status = -1
@@ -169,6 +249,7 @@ class PedalCalibrator:
   def cleanup(self) -> None:
     p("")
     p("RESTORING PEDAL / PANDA SAFETY")
+    self._watchdog_active = False
     try:
       send_safe_release(self.transport, self.pedal_can, can=self.can)
       time.sleep(0.1)
@@ -185,54 +266,106 @@ class PedalCalibrator:
     self.last_pedal_sent_ms = current_time_ms()
     self.tx_count += 1
 
+  def _source_fresh(self, seen_ms: int, now_ms: int) -> bool:
+    return seen_ms > 0 and (now_ms - seen_ms) <= SOURCE_TIMEOUT_MS
+
+  def _actuating(self) -> bool:
+    return self.pedal_enabled == 1 or self.status >= 3
+
+  def _gate(self, ok: bool, *, wait: str, abort: str, disable: bool = False) -> bool:
+    if ok:
+      return True
+    if self._actuating():
+      raise PedalCalibrationError(abort)
+    if self.frame % 100 == 0:
+      p(wait)
+    if disable and self.pedal_enabled:
+      self.send_pedal_command(0, enable=0)
+      self.pedal_enabled = 0
+    return False
+
   def process_can(self) -> None:
     try:
       for msg in self.transport.can_recv():
         unpacked = unpack_can(msg)
         if unpacked is None:
           continue
-        addr, dat, _src = unpacked
-        if addr == GTW_STATUS_ID and dat:
-          self.car_on = (dat[0] & 0x01) == 1
-        elif addr == BRAKE_MESSAGE_ID and dat:
-          self.brake_pressed = ((dat[0] >> 2) & 0x03) != 1
-        elif addr == DI_TORQUE2_ID and len(dat) > 1:
-          self.gear_neutral = (dat[1] & 0x70) == GEAR_NEUTRAL
-        elif addr == DI_TORQUE1_ID and len(dat) > 6:
-          self.di_gas = dat[6] * 0.4
-        elif addr == GAS_SENSOR_ID and len(dat) > 4:
+        addr, dat, src = unpacked
+        bus = int(src) & 0x7F
+        now_ms = current_time_ms()
+        if bus == VEHICLE_CAN_BUS:
+          if addr == GTW_STATUS_ID and dat:
+            self.car_on = (dat[0] & 0x01) == 1
+            self.car_on_seen_ms = now_ms
+          elif addr == BRAKE_MESSAGE_ID and dat:
+            status = (dat[0] >> 2) & 0x03
+            if status == BRAKE_APPLIED:
+              self.brake_pressed = True
+              self.brake_valid = True
+            elif status == BRAKE_NOT_APPLIED:
+              self.brake_pressed = False
+              self.brake_valid = True
+            else:
+              self.brake_pressed = False
+              self.brake_valid = False
+            self.brake_seen_ms = now_ms
+          elif addr == DI_TORQUE2_ID and len(dat) > 1:
+            self.gear_neutral = (dat[1] & 0x70) == GEAR_NEUTRAL
+            self.gear_seen_ms = now_ms
+          elif addr == DI_TORQUE1_ID and len(dat) > 6:
+            self.di_gas = dat[6] * 0.4
+            self.accel_seen_ms = now_ms
+          elif addr == ESP_B_ID:
+            speed = esp_b_speed_ms(dat)
+            if speed is not None:
+              self.speed_ms = speed
+              self.speed_seen_ms = now_ms
+        if addr == GAS_SENSOR_ID and bus == self.pedal_can and len(dat) > 4:
           self.pedal_interceptor_state = (dat[4] >> 7) & 0x01
           self.pedal_interceptor_value = ((dat[0] << 8) + dat[1]) * PEDAL_M1 + PEDAL_D
           self.rcv_pedal_idx = dat[4] & 0x0F
-          self.last_pedal_seen_ms = current_time_ms()
+          self.last_pedal_seen_ms = now_ms
     except TransportError as exc:
-      p(f"  CAN recv error: {exc}")
+      raise PedalCalibrationError(f"lost CAN feedback: {exc}") from exc
 
   def check_safety(self) -> bool:
-    if not self.car_on:
-      if self.frame % 100 == 0:
-        p("  Waiting: Car is not ON! Turn ignition on.")
+    now_ms = current_time_ms()
+    if not self._gate(self._source_fresh(self.speed_seen_ms, now_ms),
+                      wait="  Waiting: vehicle speed not fresh. Stay parked.",
+                      abort="lost vehicle speed"):
       return False
-    if not self.brake_pressed:
-      if self.frame % 100 == 0:
-        p("  Waiting: Brake not pressed! Press and hold brake.")
-      if self.pedal_enabled:
-        self.send_pedal_command(0, enable=0)
-        self.pedal_enabled = 0
+    if not self._gate(self.speed_ms <= STANDSTILL_SPEED_MS,
+                      wait="  Waiting: vehicle must be stationary.",
+                      abort="vehicle is moving"):
       return False
-    if not self.gear_neutral:
-      if self.frame % 100 == 0:
-        p("  Waiting: Car is not in NEUTRAL! Shift to N.")
-      if self.pedal_enabled:
-        self.send_pedal_command(0, enable=0)
-        self.pedal_enabled = 0
+    ignition_fresh = self.car_on and self._source_fresh(self.car_on_seen_ms, now_ms)
+    if not self._gate(ignition_fresh,
+                      wait="  Waiting: Car is not ON! Turn ignition on.",
+                      abort="ignition lost"):
       return False
-    if self.di_gas > 0 and self.status < 3:
-      if self.frame % 100 == 0:
-        p("  Waiting: Accelerator pedal is pressed! Release it.")
-      if self.pedal_enabled:
-        self.send_pedal_command(0, enable=0)
-        self.pedal_enabled = 0
+    if not self._gate(self._source_fresh(self.brake_seen_ms, now_ms),
+                      wait="  Waiting: Brake not pressed! Press and hold brake.",
+                      abort="brake lost", disable=True):
+      return False
+    if not self._gate(self.brake_valid,
+                      wait="  Waiting: Brake state invalid. Press and hold brake.",
+                      abort="invalid brake", disable=True):
+      return False
+    if not self._gate(self.brake_pressed,
+                      wait="  Waiting: Brake not pressed! Press and hold brake.",
+                      abort="brake lost", disable=True):
+      return False
+    if not self._gate(self._source_fresh(self.gear_seen_ms, now_ms) and self.gear_neutral,
+                      wait="  Waiting: Car is not in NEUTRAL! Shift to N.",
+                      abort="left Neutral", disable=True):
+      return False
+    if not self._gate(self._source_fresh(self.accel_seen_ms, now_ms),
+                      wait="  Waiting: Accelerator state not fresh. Release the pedal.",
+                      abort="lost accelerator", disable=True):
+      return False
+    if self.status < 3 and not self._gate(self.di_gas <= 0,
+                                          wait="  Waiting: Accelerator pedal is pressed! Release it.",
+                                          abort="accelerator pressed", disable=True):
       return False
     return True
 
@@ -339,15 +472,33 @@ class PedalCalibrator:
       p(f"  Pedal Max:    {self.pedal_max:.2f}")
       p(f"  Pedal Zero:   {self.pedal_pressed:.2f}")
       p(f"  Pedal Factor: {self.pedal_factor:.4f}")
+      self._disable_output_before_persist()
       persist_calibration(
         self.params,
         min_v=self.pedal_min,
         max_v=self.pedal_max,
         factor=self.pedal_factor,
         zero=self.pedal_pressed,
+        bus=self.pedal_can,
       )
       p("  Saved to openpilot Params")
       self.status = 7
+
+  def _disable_output_before_persist(self) -> None:
+    self._watchdog_active = False
+    try:
+      self.send_pedal_command(0, enable=0)
+    except Exception as exc:
+      p(f"  Warning: ENABLE=0 before save failed: {exc}")
+    self.pedal_enabled = 0
+    try:
+      self.transport.set_silent()
+    except Exception as exc:
+      raise PedalCalibrationError(f"could not enter SILENT before save: {exc}") from exc
+
+  def _tick_watchdog(self) -> None:
+    self.transport.send_heartbeat(False, False)
+    self.transport.require_calibration_health(self.expected_mode, self.expected_param)
 
   def run(self, rate=100) -> int:
     self.status = 2
@@ -356,6 +507,7 @@ class PedalCalibrator:
     p("  - Car ON")
     p("  - Gear in NEUTRAL")
     p("  - Brake PRESSED")
+    p("  - Stationary")
     p("  - Accelerator RELEASED")
     p(f"  [TX: Bus {self.pedal_can}, ID 0x{GAS_COMMAND_ID:03X}, teslaPreap calibration]")
     loop_period = 1.0 / rate
@@ -363,12 +515,16 @@ class PedalCalibrator:
       loop_start = time.monotonic()
       self.frame += 1
       curr_time_ms = current_time_ms()
+      if self._watchdog_active:
+        self._tick_watchdog()
       self.process_can()
       if self.status != self.prev_status:
         p(f"\n{self.STATUS_MESSAGES[self.status]}")
         self.prev_status = self.status
       if self.status == 7:
         p("\nCalibration Complete!")
+        p("Driving stays paused. Press Restart device to reboot, or turn the car off first.")
+
         return 0
       if not self.check_safety():
         time.sleep(loop_period)
@@ -384,27 +540,35 @@ class PedalCalibrator:
       if self.pedal_timeout:
         self.pedal_error_count += 1
         if self.pedal_error_count > MAX_PEDAL_ERRORS * 10:
-          p("\nERROR: Pedal communication timeout!")
-          return 1
+          raise PedalCalibrationError("Pedal communication timeout")
       elapsed = time.monotonic() - loop_start
       if elapsed < loop_period:
         time.sleep(loop_period - elapsed)
 
 
-def run(*, confirmed: bool, params: Params | None = None, transport: DiagnosticTransport | None = None) -> int:
+def run(*, confirmed: bool, params: Params | None = None,
+        transport: DiagnosticTransport | None = None, bus: int | None = None) -> int:
   params = params or Params()
-  require_preap_tool_start(params, tool="calibrate_pedal", confirmed=confirmed)
-  if not params.get_bool("NAPPedalEnabled"):
-    raise PedalCalibrationError("no pedal configured")
-  bus = parse_configured_pedal_bus(params.get("NAPPedalCanBus"))
+  require_pedal_calibration_start(params, confirmed=confirmed)
+  if bus is None:
+    bus = parse_configured_pedal_bus(params.get("NAPPedalCanBus"))
+  else:
+    bus = int(bus)
   if bus not in (0, 2):
     raise PedalCalibrationError("invalid pedal bus")
 
   owned = transport is None
-  transport = transport or DiagnosticTransport()
+  handoff_observed = False
   calibrator = None
+  if owned:
+    transport = DiagnosticTransport()
   try:
-    transport.connect()
+    wait_for_manager_release()
+    handoff_observed = True
+    if owned:
+      transport.connect(retries=PEDAL_CONNECT_RETRIES, delay=PEDAL_CONNECT_DELAY)
+    else:
+      transport.connect()
     transport.set_pedal_calibration_session(bus)
     calibrator = PedalCalibrator(params, transport, bus)
     return calibrator.run()
@@ -418,8 +582,14 @@ def run(*, confirmed: bool, params: Params | None = None, transport: DiagnosticT
         send_safe_release(transport, bus)
       except Exception:
         pass
+      try:
+        transport.set_silent()
+      except Exception:
+        pass
     if owned and transport is not None:
       transport.close()
+    if not handoff_observed:
+      clear_tool_flags(params)
 
 
 def main(argv=None) -> int:
@@ -428,7 +598,8 @@ def main(argv=None) -> int:
   p("=" * 60)
   p("Tesla Pre-AP calibration safety only. ELM327/ALLOUTPUT are rejected.")
   try:
-    return run(confirmed=parse_explicit_confirmation(argv))
+    confirmed, bus = parse_pedal_calibration_args(argv)
+    return run(confirmed=confirmed, bus=bus)
   except KeyboardInterrupt:
     p("\nInterrupted by user.")
     return 1

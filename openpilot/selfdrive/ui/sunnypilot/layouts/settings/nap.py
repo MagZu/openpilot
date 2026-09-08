@@ -10,11 +10,13 @@ from openpilot.selfdrive.ui.layouts.settings.nap_content import (
   DEFAULTS, FLASH_EPAS_INSTRUCTIONS, PEDAL_CAN_BUS_VALUES,
   RADAR_OFFSET_MAX, RADAR_OFFSET_MIN, RESTORE_EPAS_INSTRUCTIONS,
   acknowledgments_html, find_preset_index,
+  pedal_calibration_entry_block_reason, pedal_calibration_entry_enabled,
 )
 from openpilot.selfdrive.ui.radar.radar_view import RadarMonitorDialog
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.sunnypilot.selfdrive.car.tesla.preap.tools import instructions as preap_instructions
 from openpilot.sunnypilot.selfdrive.car.tesla.preap.tools.runner import launch_on_device_runner
+from openpilot.sunnypilot.selfdrive.car.tesla.preap.tools.run_script import open_pedal_calibration
 from openpilot.sunnypilot.selfdrive.car.tesla.preap.tools.safety import ToolSafetyError
 from openpilot.system.ui.lib.application import FontWeight, gui_app
 from openpilot.system.ui.lib.multilang import tr
@@ -130,6 +132,7 @@ class NAPLayout(Widget):
       callback=self._on_pedal_can_bus,
     )
     self._pedal_bus_buttons.action_item.set_enabled(ui_state.is_offroad)
+
     self._main_items.append(self._pedal_bus_buttons)
     self._pedal_calib_status = text_item_sp(
       lambda: tr("Pedal Calibration"),
@@ -142,7 +145,8 @@ class NAPLayout(Widget):
       description=lambda: tr("Run the pedal calibration routine. Vehicle must be stationary with ignition on."),
       callback=lambda: self._confirm_tool("calibrate_pedal"),
     )
-    self._calibrate_pedal_btn.action_item.set_enabled(ui_state.is_offroad)
+    self._calibrate_pedal_btn.action_item.set_enabled(pedal_calibration_entry_enabled)
+
     self._main_items.append(self._calibrate_pedal_btn)
 
     self._main_items.append(SectionHeader(tr("Radar")))
@@ -443,11 +447,18 @@ class NAPLayout(Widget):
       pass
 
   def _confirm_tool(self, tool: str):
+    if tool == "calibrate_pedal":
+      reason = pedal_calibration_entry_block_reason()
+      if reason and "waiting" not in reason:
+        gui_app.push_widget(alert_dialog(tr(reason)))
+        return
+      open_pedal_calibration(tr(CALIBRATE_PEDAL_INSTRUCTIONS))
+      return
     if not ui_state.is_offroad():
       gui_app.push_widget(alert_dialog(tr("Tools are only available offroad.")))
       return
+
     instructions = {
-      "calibrate_pedal": CALIBRATE_PEDAL_INSTRUCTIONS,
       "calibrate_radar": preap_instructions.CALIBRATE_RADAR_INSTRUCTIONS,
       "diagnose_radar": preap_instructions.DIAGNOSE_RADAR_INSTRUCTIONS,
       "test_radar": preap_instructions.TEST_RADAR_INSTRUCTIONS,

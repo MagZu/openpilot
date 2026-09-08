@@ -1,16 +1,20 @@
 """Shared instruction strings for Pre-AP production tools."""
 from openpilot.system.ui.lib.multilang import tr_noop
 
-CALIBRATE_PEDAL_INSTRUCTIONS = tr_noop("""Pedal Calibration
+CALIBRATE_PEDAL_INSTRUCTIONS = tr_noop("""Keep the car ON for calibration.
 
-This calibrates the comma pedal interceptor for Pre-AP Tesla Model S.
+1. Stop the vehicle and disengage assistance.
+2. Select Neutral and hold the brake.
+3. Release the accelerator.
+4. Check that the pedal connector is seated.
+5. Select the pedal's CAN bus below.
 
-PRECONDITIONS:
-  1. Device must be offroad
-  2. Car must be ON, Neutral, brake held
-  3. Do NOT press the accelerator
+Start pauses driving assistance. Cancel stops calibration.
+Settings are saved only after calibration succeeds.
 
-Press START to confirm and begin.""")
+When finished, turn the car off to Exit,
+or choose Restart device. No automatic restart.""")
+
 
 CALIBRATE_RADAR_INSTRUCTIONS = tr_noop("""Radar Calibration
 

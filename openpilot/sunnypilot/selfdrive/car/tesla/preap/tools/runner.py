@@ -1,8 +1,10 @@
 """Pre-AP production tool runner seam.
 
-UI launch opens run_script on the device display. Offroad is required.
+UI launch opens run_script on the device display. Offroad is required
+except for pedal calibration, which may start ignition-on while stationary.
 Sets NAPScriptRunning before spawn so manager stops pandad/card/etc.
-Clears it only after the child is confirmed gone. Stuck child: fail-closed.
+Clears it only after the child is confirmed gone and ignition is off, or
+on spawn/connect failure before USB is claimed. Stuck child: fail-closed.
 """
 from __future__ import annotations
 
@@ -11,11 +13,13 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 
 from openpilot.common.basedir import BASEDIR
 from openpilot.common.params import Params
 from openpilot.sunnypilot.selfdrive.car.tesla.preap.tools.safety import (
   DESTRUCTIVE_TOOLS,
+  ToolSafetyError,
   require_preap_tool_start,
   require_runtime_path,
 )
@@ -46,6 +50,36 @@ def mark_script_running(params: Params) -> None:
 def clear_tool_flags(params: Params) -> None:
   params.put_bool("NAPScriptRunning", False, block=True)
   params.put_bool("NAPEpasRiskAccepted", False, block=True)
+
+TOOL_STOPPED_PROCESSES = ("pandad", "card", "controlsd")
+OWNERSHIP_TIMEOUT_S = 8.0
+
+
+def processes_released(manager_state, names=TOOL_STOPPED_PROCESSES) -> bool:
+  running = {p.name: p.running for p in manager_state.processes}
+  return all(name in running and not running[name] for name in names)
+
+
+def wait_for_manager_release(sm=None, *, timeout_s=OWNERSHIP_TIMEOUT_S,
+                             sleep=time.sleep, now=time.monotonic) -> None:
+  """Wait until managerState shows pandad/card/controlsd not alive.
+
+  NAPScriptRunning must already be set. Does not invent a manager ack param.
+  Returns only after a seen managerState lists those processes as stopped.
+  """
+  from openpilot.cereal import messaging
+  sm = sm or messaging.SubMaster(["managerState"])
+  deadline = now() + timeout_s
+  while now() < deadline:
+    sm.update(100)
+    seen = getattr(sm, "seen", {}).get("managerState")
+    alive = getattr(sm, "alive", {}).get("managerState", True)
+    valid = getattr(sm, "valid", {}).get("managerState", True)
+    if seen and alive and valid and processes_released(sm["managerState"]):
+      return
+    sleep(0.05)
+  raise ToolSafetyError("timed out waiting for driving processes to stop")
+
 
 
 def stop_child(process: subprocess.Popen) -> bool:
@@ -83,7 +117,18 @@ def _reap_tool(process: subprocess.Popen, params: Params) -> None:
   try:
     process.wait()
   finally:
-    clear_tool_flags(params)
+    # Clearing while started=true immediately restarts pandad/card.
+    # IsOffroad can be stale with pandad stopped; leaving the flag set is
+    # fail-closed. Print so CLI does not look like a finished resume.
+    if params.get_bool("IsOffroad"):
+      clear_tool_flags(params)
+    elif params.get_bool("NAPScriptRunning"):
+      print(
+        "ERROR: NAPScriptRunning left set; driving processes stay paused until device restart",
+        flush=True,
+      )
+
+
 
 
 def start_tool(tool: str, *, confirmed: bool, params: Params | None = None) -> subprocess.Popen:
@@ -143,7 +188,9 @@ def stop_tool(process: subprocess.Popen, params: Params | None = None) -> None:
   params = params or Params()
   if not stop_child(process):
     return
-  clear_tool_flags(params)
+  if params.get_bool("IsOffroad"):
+    clear_tool_flags(params)
+
 
 
 def is_destructive(tool: str) -> bool:

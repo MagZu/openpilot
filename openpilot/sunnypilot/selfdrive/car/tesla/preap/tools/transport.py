@@ -20,6 +20,14 @@ ALLOWED_DIAGNOSTIC_MODES = frozenset({SAFETY_SILENT, SAFETY_ELM327})
 ALLOWED_SAFETY_MODES = ALLOWED_DIAGNOSTIC_MODES | frozenset({SAFETY_TESLA_PREAP})
 PANDA_CONNECT_RETRIES = 5
 PANDA_CONNECT_DELAY = 2.0
+PEDAL_CONNECT_RETRIES = 8
+PEDAL_CONNECT_DELAY = 0.25
+# Ignition-on teslaPreap falls to SILENT in 5s without 0xf3. Keep USB I/O
+# well under that. Default panda bulkRead timeout is 15s with unbounded retry.
+CAN_RECV_TIMEOUT_MS = 100
+CAN_RECV_RETRIES = 3
+HEALTH_TIMEOUT_MS = 200
+HEARTBEAT_TIMEOUT_MS = 200
 
 
 class TransportError(Exception):
@@ -49,9 +57,10 @@ class DiagnosticTransport:
   def __init__(self, panda=None):
     self.panda = panda
     self._mode = SAFETY_SILENT
+    self._param = 0
     self._mode_set = False
 
-  def connect(self, panda_factory=None):
+  def connect(self, panda_factory=None, retries=PANDA_CONNECT_RETRIES, delay=PANDA_CONNECT_DELAY):
     if self.panda is not None:
       return self.panda
     factory = panda_factory
@@ -59,14 +68,14 @@ class DiagnosticTransport:
       from panda import Panda
       factory = Panda
     last_exc: Exception | None = None
-    for attempt in range(PANDA_CONNECT_RETRIES):
+    for attempt in range(retries):
       try:
         self.panda = factory()
         return self.panda
       except Exception as exc:
         last_exc = exc
-        if attempt < PANDA_CONNECT_RETRIES - 1:
-          time.sleep(PANDA_CONNECT_DELAY)
+        if attempt < retries - 1:
+          time.sleep(delay)
     raise TransportError(f"panda connect failed: {last_exc}") from last_exc
 
   def set_diagnostic_session(self) -> None:
@@ -80,6 +89,7 @@ class DiagnosticTransport:
 
     Legal safetyParam is 64 (bus 2) or 96 (bus 0). Production 0x551 gates
     are unchanged; this mode only admits 0x551 on the selected bus.
+    teslaPreap is a car safety mode: heartbeat checks cannot stay disabled.
     """
     if bus not in (0, 2):
       raise TransportError("invalid pedal bus")
@@ -88,6 +98,79 @@ class DiagnosticTransport:
       param |= PREAP_FLAG_PEDAL_BUS_ZERO
     self.set_silent()
     self._set_safety_mode(SAFETY_TESLA_PREAP, param=param)
+    self.send_heartbeat(False, False)
+
+  def _usb_handle(self):
+    if self.panda is None:
+      raise TransportError("panda not connected")
+    handle = getattr(self.panda, "_handle", None)
+    buf = getattr(self.panda, "can_rx_overflow_buffer", None)
+    has_usb = (
+      handle is not None
+      and callable(getattr(handle, "controlWrite", None))
+      and callable(getattr(handle, "controlRead", None))
+      and callable(getattr(handle, "bulkRead", None))
+      and isinstance(buf, (bytes, bytearray))
+    )
+    if not has_usb:
+      raise TransportError("panda usb handle missing")
+    return handle
+
+  def send_heartbeat(self, engaged: bool = False, engaged_mads: bool = False) -> None:
+    """Keep the panda watchdog alive without driving engagement bits.
+
+    Panda.send_heartbeat defaults to True, True. Calibration must pass
+    false, false explicitly. teslaPreap calibration clamps both to false.
+    """
+    handle = self._usb_handle()
+    if self._mode == SAFETY_TESLA_PREAP:
+      engaged = False
+      engaged_mads = False
+    try:
+      from panda import Panda
+      handle.controlWrite(
+        Panda.REQUEST_OUT, 0xf3, int(engaged), int(engaged_mads), b"",
+        timeout=HEARTBEAT_TIMEOUT_MS,
+      )
+    except TransportError:
+      raise
+    except Exception as exc:
+      raise TransportError(f"heartbeat failed: {exc}") from exc
+
+  def read_health(self) -> dict:
+    handle = self._usb_handle()
+    health_struct = getattr(type(self.panda), "HEALTH_STRUCT", None)
+    if health_struct is None or not hasattr(health_struct, "size") or not hasattr(health_struct, "unpack"):
+      raise TransportError("panda health failed: missing HEALTH_STRUCT")
+    try:
+      from panda import Panda
+      dat = handle.controlRead(
+        Panda.REQUEST_IN, 0xd2, 0, 0, health_struct.size, timeout=HEALTH_TIMEOUT_MS,
+      )
+      a = health_struct.unpack(dat)
+      return {
+        "safety_mode": a[12],
+        "safety_param": a[13],
+        "heartbeat_lost": a[16],
+        "ignition_line": a[8],
+        "ignition_can": a[9],
+      }
+    except TransportError:
+      raise
+    except Exception as exc:
+      raise TransportError(f"panda health failed: {exc}") from exc
+
+  def require_calibration_health(self, expected_mode: int, expected_param: int) -> None:
+    """Abort on SILENT, watchdog loss, or mode/param mismatch. Never rearm."""
+    health = self.read_health()
+    if health.get("heartbeat_lost"):
+      raise TransportError("watchdog heartbeat lost")
+    mode = int(health.get("safety_mode", -1))
+    param = int(health.get("safety_param", -1))
+    if mode == SAFETY_SILENT:
+      raise TransportError("unexpected SILENT safety mode")
+    if mode != int(expected_mode) or param != int(expected_param):
+      raise TransportError("unexpected safety mode")
 
   def _set_safety_mode(self, mode: int, param: int = 0) -> None:
     if mode == SAFETY_ALLOUTPUT or mode not in ALLOWED_SAFETY_MODES:
@@ -109,15 +192,28 @@ class DiagnosticTransport:
       raise TransportError("panda not connected")
     self.panda.set_safety_mode(mode, param)
     self._mode = mode
+    self._param = int(param)
     self._mode_set = True
 
   def can_recv(self):
-    if self.panda is None:
+    handle = self._usb_handle()
+    panda = self.panda
+    if panda is None:
       raise TransportError("panda not connected")
-    try:
-      return self.panda.can_recv()
-    except Exception as exc:
-      raise TransportError(f"can_recv failed: {exc}") from exc
+    last_exc: Exception | None = None
+    for _attempt in range(CAN_RECV_RETRIES):
+      try:
+        from panda.python import unpack_can_buffer
+        dat = handle.bulkRead(1, 16384, timeout=CAN_RECV_TIMEOUT_MS)
+        overflow = bytearray(panda.can_rx_overflow_buffer)
+        msgs, overflow = unpack_can_buffer(overflow + dat)
+        panda.can_rx_overflow_buffer = overflow
+        return msgs
+      except TransportError:
+        raise
+      except Exception as exc:
+        last_exc = exc
+    raise TransportError(f"can_recv failed: {last_exc}") from last_exc
 
   def can_send(self, addr: int, dat: bytes, bus: int) -> None:
     if self.panda is None:
@@ -146,3 +242,32 @@ class DiagnosticTransport:
       pass
     self.panda = None
     self._mode_set = False
+    self._param = 0
+
+
+def ignition_from_health(health: dict) -> bool | None:
+  line = health.get("ignition_line")
+  can = health.get("ignition_can")
+  if line is None and can is None:
+    return None
+  return bool(line or can)
+
+
+def sample_panda_ignition(transport_factory=None) -> bool | None:
+  """Fresh ignition after the calibrator has released USB. None if unknown.
+
+  Always closes the probe. Does not program teslaPreap.
+  """
+  factory = transport_factory or DiagnosticTransport
+  transport = factory()
+  try:
+    transport.connect(retries=3, delay=0.2)
+    return ignition_from_health(transport.read_health())
+  except Exception:
+    return None
+  finally:
+    try:
+      transport.close()
+    except Exception:
+      pass
+

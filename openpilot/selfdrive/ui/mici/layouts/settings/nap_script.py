@@ -24,3 +24,12 @@ def launch_script(title: str, instructions: str, script_module: str) -> None:
     launch_on_device_runner(title, TOOL_BY_MODULE[script_module], instructions)
   except (ToolSafetyError, ValueError, KeyError) as exc:
     gui_app.push_widget(BigDialog("can't start tool", str(exc)))
+
+
+def open_pedal_wizard() -> None:
+  """Host pedal calibration in the existing UI. Never spawn a second DRM window."""
+  try:
+    from openpilot.sunnypilot.selfdrive.car.tesla.preap.tools.run_script import open_pedal_calibration
+    open_pedal_calibration()
+  except (ToolSafetyError, ValueError, KeyError) as exc:
+    gui_app.push_widget(BigDialog("can't start tool", str(exc)))
