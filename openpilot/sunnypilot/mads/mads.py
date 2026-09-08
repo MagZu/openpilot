@@ -374,8 +374,9 @@ class ModularAssistiveDrivingSystem:
             self.events_sp.remove(EventNameSP.lkasEnable)
             self.events_sp.add(EventNameSP.pedalPressedAlertOnly)
 
-    if self._hands_on_pause_available and not self.enabled:
-      if int(getattr(CS, "handsOnLevel", 0) or 0) >= HANDS_ON_PAUSE_LEVEL:
+    if self._hands_on_pause_available:
+      hands_high = int(getattr(CS, "handsOnLevel", 0) or 0) >= HANDS_ON_PAUSE_LEVEL
+      if hands_high or self._hands_on_steering_inhibited:
         if self.events_sp.has(EventNameSP.lkasEnable):
           self.events_sp.remove(EventNameSP.lkasEnable)
 

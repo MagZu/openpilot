@@ -34,7 +34,7 @@ class TeslaSettings(BrandSettings):
     self.hands_on_pause_toggle = toggle_item_sp(
       tr("Hands-On Pause"),
       tr(
-        "Default off: hands on the wheel fully disengages. On: pause steering and cancel speed control, then resume steering after you release for one second.",
+        "Off: steering takeover disengages. On: pause steering, not active cruise. Steering resumes 1 second after release; canceled cruise stays off.",
       ),
       param="TeslaPreapHandsOnPause",
     )

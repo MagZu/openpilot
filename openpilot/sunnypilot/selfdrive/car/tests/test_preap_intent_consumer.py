@@ -1,9 +1,10 @@
 import unittest
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from openpilot.cereal import custom, log
-from opendbc.car import structs
+from opendbc.can import CANPacker
+from opendbc.car import CanData, structs
 from opendbc.car.car_helpers import interfaces
 from opendbc.car.common.conversions import Conversions as CV
 import opendbc.car.tesla.preap.nap_conf as nap_conf_mod
@@ -16,12 +17,15 @@ from openpilot.selfdrive.car.car_specific import CarSpecificEvents
 from openpilot.sunnypilot.selfdrive.car.car_specific import CarSpecificEventsSP
 from opendbc.car.tesla.preap.sp.platform import preap_radar_present
 from opendbc.sunnypilot.car.tesla.values import TeslaFlagsSP
-from opendbc.car.tesla.preap.sp.carstate import PreAPCarState
+from opendbc.car.tesla.preap.sp.carstate import PREAP_HANDS_ON_RESUME_MS, PreAPCarState
 from opendbc.car.tesla.values import CAR, CruiseButtons
 from openpilot.selfdrive.car.helpers import convert_to_capnp
 from openpilot.selfdrive.selfdrived.preap_regen import PreAPChimeState, update_preap_chimes
 from openpilot.selfdrive.selfdrived.state import StateMachine as OPStateMachine
 from openpilot.sunnypilot.mads.mads import ModularAssistiveDrivingSystem
+from opendbc.car.tesla.preap.carcontroller import PedalAuthorityState, PreAPLongController
+from opendbc.car.tesla.preap.nap_conf import PEDAL_MAX_VALUES
+from opendbc.car.tesla.preap.teslacan import GAS_COMMAND_ID, PEDAL_D, PEDAL_M1, TeslaCANPreAP
 from openpilot.sunnypilot.selfdrive.car.preap_intent import (
   PreAPIntentConsumer, UINT32_HALF, UINT32_MASK, sequence_is_newer,
 )
@@ -253,7 +257,7 @@ class TestPreAPIntentConsumer(unittest.TestCase):
     self.assertEqual(lon.preapLongitudinalIntent, structs.CarStateSP.PreapLongitudinalIntent.enable)
     self.assertNotEqual(lat.preapIntentSequence, lon.preapIntentSequence)
 
-  def test_adapter_hands_on_drops_long_keeps_lat(self):
+  def test_adapter_hands_on_keeps_active_long(self):
     CP = structs.CarParams()
     CP.carFingerprint = CAR.TESLA_MODEL_S_PREAP
     CP_SP = structs.CarParamsSP()
@@ -261,12 +265,18 @@ class TestPreAPIntentConsumer(unittest.TestCase):
     cs = PreAPCarState(CP, CP_SP)
     cs.engagement.cruiseEnabled = True
     cs.engagement.enableLongControl = True
+    cs.engagement.pedal_speed_kph = 72.0
+    cs.engagement.stalk_pull_time_ms = 1500
+    cs.engagement.prev_stalk_pull_time_ms = 1000
+    cs.engagement.pending_enable = True
     cs._epas_hands = 2
     cs.engagement.handle_steering_disengage(True)
     self.assertTrue(cs.engagement.cruiseEnabled)
-    self.assertFalse(cs.engagement.enableLongControl)
-    self.assertFalse(cs.engagement.enableJustCC)
-    self.assertTrue(cs._pause_cancel_this_tick)
+    self.assertTrue(cs.engagement.enableLongControl)
+    self.assertAlmostEqual(cs.engagement.pedal_speed_kph, 72.0)
+    self.assertFalse(cs.engagement.pending_enable)
+    self.assertEqual(cs.engagement.stalk_pull_time_ms, 0)
+    self.assertEqual(cs.engagement.prev_stalk_pull_time_ms, -1000)
 
   def test_adapter_epas_reject_full_disengage(self):
     CP = structs.CarParams()
@@ -335,6 +345,48 @@ class TestPreAPIntentConsumer(unittest.TestCase):
     self.assertFalse(ret.cruiseState.enabled)
     self.assertFalse(cs.preap_cc_cancel_needed)
     self.assertFalse(cs.preap_cc_engage_needed)
+    self.assertEqual(cs.engagement.stalk_pull_time_ms, 0)
+    self.assertEqual(cs.engagement.prev_stalk_pull_time_ms, -1000)
+
+  def test_adapter_pause_swallows_main_without_starting_or_dropping_long(self):
+    CP = structs.CarParams()
+    CP.carFingerprint = CAR.TESLA_MODEL_S_PREAP
+    CP_SP = structs.CarParamsSP()
+    CP_SP.flags = int(TeslaFlagsSP.PREAP_HANDS_ON_PAUSE)
+    cs = PreAPCarState(CP, CP_SP)
+    cs.engagement.enableDoublePull = True
+    cs.engagement.double_pull_window_ms = 750
+    cs._epas_hands = 2
+    cs.engagement.cruiseEnabled = True
+    cs.engagement.enableLongControl = True
+    cs.engagement.pedal_speed_kph = 64.0
+    cs.engagement.process_buttons(
+      CruiseButtons.MAIN, CruiseButtons.IDLE, 2000, 20.0, "KPH", True, True, True, False,
+    )
+    self.assertTrue(cs.engagement.cruiseEnabled)
+    self.assertTrue(cs.engagement.enableLongControl)
+    self.assertAlmostEqual(cs.engagement.pedal_speed_kph, 64.0)
+
+    cs.engagement.enableLongControl = False
+    cs.engagement.pedal_speed_kph = 0.0
+    cs.engagement.process_buttons(
+      CruiseButtons.MAIN, CruiseButtons.IDLE, 2800, 20.0, "KPH", True, True, True, False,
+    )
+    self.assertTrue(cs.engagement.cruiseEnabled)
+    self.assertFalse(cs.engagement.enableLongControl)
+    self.assertEqual(cs.engagement.pedal_speed_kph, 0.0)
+
+    cs._epas_hands = 0
+    cs.engagement.process_buttons(
+      CruiseButtons.IDLE, CruiseButtons.IDLE, 2800, 20.0, "KPH", True, True, True, False,
+    )
+    cs.engagement.process_buttons(
+      CruiseButtons.MAIN, CruiseButtons.IDLE, 2800 + PREAP_HANDS_ON_RESUME_MS - 1,
+      20.0, "KPH", True, True, True, False,
+    )
+    self.assertTrue(cs.engagement.cruiseEnabled)
+    self.assertFalse(cs.engagement.enableLongControl)
+    self.assertEqual(cs.engagement.stalk_pull_time_ms, 0)
 
   def test_fresh_set_cruise_while_cruise_true_requests_lat(self):
     CP = structs.CarParams()
@@ -568,6 +620,416 @@ class TestPedalLongitudinalHostFlow(unittest.TestCase):
     self.assertTrue(events.has(EventName.steerUnavailable))
     self.assertFalse(op_enabled)
     self.assertFalse(self.mads.enabled)
+
+
+class _PausePandaSM(dict):
+  def __init__(self, pandas, panda_valid=True):
+    super().__init__({"pandaStates": pandas})
+    self.updated = {"pandaStates": True}
+    self.panda_valid = panda_valid
+
+  def all_checks(self, services):
+    return self.panda_valid and services == ["pandaStates"]
+
+
+def _pause_panda(inhibited, lat=True, allowed=True):
+  ps = MagicMock()
+  ps.steeringControlInhibited = inhibited
+  ps.controlsAllowedLateral = lat
+  ps.controlsAllowed = allowed
+  model = getattr(structs.CarParams.SafetyModel, "teslaPreap", None)
+  if model is None:
+    model = structs.CarParams.SafetyModel.tesla
+  ps.safetyModel = model
+  return ps
+
+
+State = custom.ModularAssistiveDrivingSystem.ModularAssistiveDrivingSystemState
+
+
+class TestHandsOnPauseHostFlow(TestPedalLongitudinalHostFlow):
+  def setUp(self):
+    super().setUp()
+    self.CP_SP.madsHandsOnPauseAvailable = True
+    self.CP_SP.flags = int(getattr(self.CP_SP, "flags", 0) or 0) | int(TeslaFlagsSP.PREAP_HANDS_ON_PAUSE)
+    self.adapter = PreAPCarState(self.CP, self.CP_SP)
+    self.adapter.engagement.enableDoublePull = True
+    self.adapter.engagement.double_pull_window_ms = 750
+    seed = structs.CarStateSP()
+    self.adapter._publish_mads_intent(seed)
+    self.cs_sp = convert_to_capnp(seed)
+    self.sp = CarSpecificEventsSP(self.CP, self.CP_SP)
+    self.sp.update(structs.CarState(), Events(), self.cs_sp)
+    self.sd.sm = _PausePandaSM([_pause_panda(False)])
+    self.mads = ModularAssistiveDrivingSystem(self.sd)
+
+  def _set_panda(self, inhibited, lat=True, allowed=True):
+    self.sd.sm = _PausePandaSM([_pause_panda(inhibited, lat=lat, allowed=allowed)])
+
+  def _pause_cs(self, hands=0, steering_disengage=False, **kwargs):
+    cs = self._cs(**kwargs)
+    cs.handsOnLevel = hands
+    cs.steeringDisengage = steering_disengage
+    return cs
+
+  def _hands_override(self, hands, reject=False, fault=False):
+    self.adapter._epas_hands = hands
+    self.adapter._epas_rejecting = reject
+    self.adapter._epas_fault = fault
+    self.adapter.engagement.handle_steering_disengage(hands >= 2 or reject)
+
+  def test_pause_keeps_healthy_long_and_pauses_lateral(self):
+    self._first_pull(gas=True)
+    self._second_pull(gas=True)
+    self._tick(self._cs(gas=False))
+    self.assertTrue(self.adapter.engagement.enableLongControl)
+    self.assertTrue(self.sd.enabled)
+    self.assertTrue(self.mads.enabled)
+    speed = self.adapter.engagement.pedal_speed_kph
+
+    self._set_panda(True)
+    self._hands_override(2)
+    self.assertTrue(self.adapter.engagement.cruiseEnabled)
+    self.assertTrue(self.adapter.engagement.enableLongControl)
+    self.assertAlmostEqual(self.adapter.engagement.pedal_speed_kph, speed)
+    self._publish()
+    events, _, op_enabled, chimes = self._tick(self._pause_cs(hands=2, gas=False))
+    self.assertFalse(events.has(EventName.steerDisengage))
+    self.assertFalse(events.has(EventName.buttonCancel))
+    self.assertFalse(self.events_sp.has(EventNameSP.lkasDisable))
+    self.assertTrue(self.events_sp.has(EventNameSP.silentLkasDisable))
+    self.assertTrue(op_enabled)
+    self.assertTrue(self.adapter.engagement.enableLongControl)
+    self.assertEqual(self.mads.state_machine.state, State.paused)
+    self.assertTrue(self.mads.enabled)
+    self.assertFalse(self.mads.active)
+    self.assertFalse(chimes.long_disengage)
+    self.assertAlmostEqual(self.adapter.engagement.pedal_speed_kph, speed)
+
+  def test_pause_does_not_start_inactive_long(self):
+    self._first_pull(gas=False)
+    self.assertFalse(self.adapter.engagement.enableLongControl)
+    self._set_panda(True)
+    self._hands_override(2)
+    self.adapter.engagement.process_buttons(
+      CruiseButtons.MAIN, CruiseButtons.IDLE, 2500, 20.0, "KPH", True, True, True, False,
+    )
+    self.assertTrue(self.adapter.engagement.cruiseEnabled)
+    self.assertFalse(self.adapter.engagement.enableLongControl)
+    self._publish()
+    _, _, op_enabled, _ = self._tick(self._pause_cs(hands=2))
+    self.assertFalse(self.adapter.engagement.enableLongControl)
+    self.assertFalse(op_enabled)
+
+  def test_brake_drops_long_and_pause_does_not_resume_it(self):
+    self._first_pull(gas=True)
+    self._second_pull(gas=True)
+    self._tick(self._cs(gas=False))
+    self._pull(CruiseButtons.IDLE, CruiseButtons.IDLE, 2000, brake=True)
+    self.assertFalse(self.adapter.engagement.enableLongControl)
+    self._publish()
+    self._tick(self._cs(gas=False))
+    self._set_panda(True)
+    self._hands_override(2)
+    self.assertFalse(self.adapter.engagement.enableLongControl)
+    self._publish()
+    _, _, op_enabled, _ = self._tick(self._pause_cs(hands=2, gas=False))
+    self.assertFalse(self.adapter.engagement.enableLongControl)
+    self.assertFalse(op_enabled)
+    self._set_panda(False)
+    self._hands_override(0)
+    self._publish()
+    self._tick(self._pause_cs(hands=0, gas=False))
+    self.assertFalse(self.adapter.engagement.enableLongControl)
+
+  def test_epas_reject_full_disengage_with_pause_on(self):
+    self._first_pull(gas=True)
+    self._second_pull(gas=True)
+    self._tick(self._cs(gas=False))
+    self._hands_override(2, reject=True)
+    self.assertFalse(self.adapter.engagement.cruiseEnabled)
+    self.assertFalse(self.adapter.engagement.enableLongControl)
+    self._publish()
+    events, events_sp, op_enabled, _ = self._tick(self._pause_cs(hands=2, steering_disengage=True, gas=False))
+    self.assertTrue(events.has(EventName.steerDisengage) or events_sp.has(EventNameSP.lkasDisable) or events.has(EventName.buttonCancel))
+    self.assertFalse(op_enabled)
+    self.assertFalse(self.mads.active)
+
+  def test_default_off_still_full_disengages(self):
+    off = PreAPCarState(self.CP, structs.CarParamsSP())
+    off.engagement.cruiseEnabled = True
+    off.engagement.enableLongControl = True
+    off.engagement.pedal_speed_kph = 72.0
+    off._epas_hands = 2
+    off.engagement.handle_steering_disengage(True)
+    self.assertFalse(off.engagement.cruiseEnabled)
+    self.assertFalse(off.engagement.enableLongControl)
+    self.assertEqual(off.engagement.pedal_speed_kph, 0.0)
+    off.engagement.enableDoublePull = True
+    off.engagement.process_buttons(
+      CruiseButtons.MAIN, CruiseButtons.IDLE, 1000, 20.0, "KPH", True, True, True, False,
+    )
+    self.assertTrue(off.engagement.cruiseEnabled)
+    self.assertFalse(off.engagement.enableLongControl)
+
+  def test_revoked_pull_is_not_false_double_pull(self):
+    self.adapter._epas_hands = 2
+    self.adapter.engagement.stalk_pull_time_ms = 4000
+    self.adapter.engagement.prev_stalk_pull_time_ms = 3900
+    self.adapter.engagement.pending_enable = True
+    ret = structs.CarState()
+    self.adapter._revoke_unadmitted_held_hands(ret)
+    self.assertEqual(self.adapter.engagement.stalk_pull_time_ms, 0)
+    self.adapter._epas_hands = 0
+    self.adapter.engagement.process_buttons(
+      CruiseButtons.MAIN, CruiseButtons.IDLE, 4100, 20.0, "KPH", True, True, True, False,
+    )
+    self.assertTrue(self.adapter.engagement.cruiseEnabled)
+    self.assertFalse(self.adapter.engagement.enableLongControl)
+
+  def test_repeated_disengage_then_double_pull(self):
+    t = 1000
+    for _ in range(5):
+      self._pull(CruiseButtons.MAIN, CruiseButtons.IDLE, t)
+      t += 500
+      self._pull(CruiseButtons.MAIN, CruiseButtons.IDLE, t)
+      t += 1500
+      self._pull(CruiseButtons.CANCEL, CruiseButtons.IDLE, t)
+      t += 1500
+    self.assertFalse(self.adapter.engagement.cruiseEnabled)
+    self.assertFalse(self.adapter.engagement.enableLongControl)
+    self._pull(CruiseButtons.MAIN, CruiseButtons.IDLE, t)
+    self.assertTrue(self.adapter.engagement.cruiseEnabled)
+    self.assertFalse(self.adapter.engagement.enableLongControl)
+    self._pull(CruiseButtons.MAIN, CruiseButtons.IDLE, t + 400)
+    self.assertTrue(self.adapter.engagement.enableLongControl)
+
+  def test_recovery_hold_rejects_inactive_long_pull(self):
+    self._first_pull(gas=False)
+    self.assertFalse(self.adapter.engagement.enableLongControl)
+    self._hands_override(2)
+    self._pull(CruiseButtons.IDLE, CruiseButtons.IDLE, 2000)
+    self.adapter._epas_hands = 0
+    self._pull(CruiseButtons.IDLE, CruiseButtons.IDLE, 2000)
+    self._pull(CruiseButtons.MAIN, CruiseButtons.IDLE, 2100)
+    self._pull(CruiseButtons.MAIN, CruiseButtons.IDLE, 2500)
+    self.assertTrue(self.adapter.engagement.cruiseEnabled)
+    self.assertFalse(self.adapter.engagement.enableLongControl)
+    self._publish()
+    events, _, op_enabled, _ = self._tick(self._pause_cs(hands=0))
+    self.assertFalse(events.has(EventName.buttonEnable))
+    self.assertFalse(op_enabled)
+    self.assertFalse(self.adapter.engagement.enableLongControl)
+
+  def test_held_main_then_fresh_pull_after_recovery(self):
+    self._first_pull(gas=False)
+    self._hands_override(2)
+    self._pull(CruiseButtons.IDLE, CruiseButtons.IDLE, 2000)
+    self.adapter._epas_hands = 0
+    self._pull(CruiseButtons.MAIN, CruiseButtons.IDLE, 2000)
+    self._pull(CruiseButtons.IDLE, CruiseButtons.MAIN, 2200)
+    self._pull(CruiseButtons.MAIN, CruiseButtons.IDLE, 2400)
+    self._pull(CruiseButtons.MAIN, CruiseButtons.MAIN, 2000 + PREAP_HANDS_ON_RESUME_MS)
+    self.assertFalse(self.adapter.engagement.enableLongControl)
+    self._publish()
+    events, _, op_enabled, _ = self._tick(self._pause_cs(hands=0))
+    self.assertFalse(events.has(EventName.buttonEnable))
+    self.assertFalse(op_enabled)
+
+    self._pull(CruiseButtons.IDLE, CruiseButtons.MAIN, 2000 + PREAP_HANDS_ON_RESUME_MS + 100)
+    self._pull(CruiseButtons.MAIN, CruiseButtons.IDLE, 2000 + PREAP_HANDS_ON_RESUME_MS + 200)
+    self.assertFalse(self.adapter.engagement.enableLongControl)
+    self._pull(CruiseButtons.MAIN, CruiseButtons.IDLE, 2000 + PREAP_HANDS_ON_RESUME_MS + 600)
+    self.assertTrue(self.adapter.engagement.enableLongControl)
+    self._publish()
+    events, _, op_enabled, _ = self._tick(self._cs(gas=False))
+    self.assertTrue(events.has(EventName.buttonEnable))
+    self.assertTrue(op_enabled)
+
+  def test_renewed_hands_resets_recovery_hold(self):
+    self._first_pull(gas=False)
+    self._hands_override(2)
+    self._pull(CruiseButtons.IDLE, CruiseButtons.IDLE, 2000)
+    self.adapter._epas_hands = 0
+    self._pull(CruiseButtons.IDLE, CruiseButtons.IDLE, 2000)
+    self._hands_override(2)
+    self._pull(CruiseButtons.IDLE, CruiseButtons.IDLE, 2600)
+    self.adapter._epas_hands = 0
+    self._pull(CruiseButtons.IDLE, CruiseButtons.IDLE, 2600)
+    self._pull(CruiseButtons.MAIN, CruiseButtons.IDLE, 2600 + PREAP_HANDS_ON_RESUME_MS - 1)
+    self._pull(CruiseButtons.MAIN, CruiseButtons.IDLE, 2600 + PREAP_HANDS_ON_RESUME_MS - 1 + 400)
+    self.assertFalse(self.adapter.engagement.enableLongControl)
+    self._pull(CruiseButtons.IDLE, CruiseButtons.IDLE, 2600 + PREAP_HANDS_ON_RESUME_MS)
+    self._pull(CruiseButtons.MAIN, CruiseButtons.IDLE, 2700 + PREAP_HANDS_ON_RESUME_MS)
+    self._pull(CruiseButtons.MAIN, CruiseButtons.IDLE, 3100 + PREAP_HANDS_ON_RESUME_MS)
+    self.assertTrue(self.adapter.engagement.enableLongControl)
+
+  def test_recovery_hold_keeps_active_long_target(self):
+    self._first_pull(gas=True)
+    self._second_pull(gas=True)
+    speed = self.adapter.engagement.pedal_speed_kph
+    self._hands_override(2)
+    self._pull(CruiseButtons.IDLE, CruiseButtons.IDLE, 2000)
+    self.adapter._epas_hands = 0
+    self._pull(CruiseButtons.MAIN, CruiseButtons.IDLE, 2000)
+    self._pull(CruiseButtons.MAIN, CruiseButtons.IDLE, 2400)
+    self.assertTrue(self.adapter.engagement.enableLongControl)
+    self.assertAlmostEqual(self.adapter.engagement.pedal_speed_kph, speed)
+    self._publish()
+    events, _, op_enabled, _ = self._tick(self._pause_cs(hands=0, gas=False))
+    self.assertFalse(events.has(EventName.buttonEnable))
+    self.assertTrue(self.adapter.engagement.enableLongControl)
+    self.assertTrue(op_enabled)
+    self.assertAlmostEqual(self.adapter.engagement.pedal_speed_kph, speed)
+
+  def test_epas_fault_clears_hold_unlike_hands_pause(self):
+    self._first_pull(gas=True)
+    self._second_pull(gas=True)
+    self._tick(self._cs(gas=False))
+    self._hands_override(2)
+    self._pull(CruiseButtons.IDLE, CruiseButtons.IDLE, 2000)
+    self._hands_override(2, fault=True)
+    self.assertFalse(self.adapter.engagement.cruiseEnabled)
+    self.assertFalse(self.adapter.engagement.enableLongControl)
+    self.adapter._epas_hands = 0
+    self.adapter._epas_fault = False
+    self._pull(CruiseButtons.MAIN, CruiseButtons.IDLE, 2100)
+    self.assertTrue(self.adapter.engagement.cruiseEnabled)
+    self.assertFalse(self.adapter.engagement.enableLongControl)
+
+
+def _decode_pedal_enable(command):
+  address, data, _bus = command
+  assert address == GAS_COMMAND_ID
+  return bool(data[4] & 0x80), (data[0] << 8 | data[1]) * PEDAL_M1 + PEDAL_D
+
+
+class TestPausePedalOutputContinuity(unittest.TestCase):
+  def setUp(self):
+    conf = SimpleNamespace(
+      use_pedal=True,
+      pedal_factor=1.0,
+      pedal_can_zero=False,
+      di_to_pedal=lambda pedal_di: pedal_di,
+      pedal_to_di=lambda pedal: pedal,
+      get_pedal_profile_values=lambda: PEDAL_MAX_VALUES,
+    )
+    zero = SimpleNamespace(get=lambda _v_ego: 0.0, update=lambda *_a, **_k: None)
+    self.enterContext(patch("opendbc.car.tesla.preap.carcontroller.nap_conf", conf))
+    self.enterContext(patch("opendbc.car.tesla.preap.carcontroller.get_zero_torque", lambda: zero))
+    self.enterContext(patch("opendbc.car.tesla.preap.virtual_das.nap_conf", conf))
+    self.enterContext(patch("opendbc.car.tesla.preap.carstate.nap_conf", conf))
+    self.enterContext(patch("opendbc.car.tesla.preap.pedal_feedback.nap_conf", conf))
+    self.enterContext(patch("opendbc.car.tesla.preap.virtual_das.get_zero_torque", lambda: zero))
+    CP = structs.CarParams()
+    CP.carFingerprint = CAR.TESLA_MODEL_S_PREAP
+    CP_SP = structs.CarParamsSP()
+    CP_SP.flags = int(TeslaFlagsSP.PREAP_HANDS_ON_PAUSE)
+    self.cs = PreAPCarState(CP, CP_SP)
+    self.cs.engagement.enableDoublePull = True
+    self.cs.engagement.double_pull_window_ms = 750
+    self.cs.pedal.available = True
+    self.cs.pedal.timeout = False
+    self.cs.pedal.interceptor_state = 0
+    self.cs.pedal.idx = 1
+    self.cs.real_brake_pressed = False
+    self.cs.out.vEgo = 20.0
+    self.cs.out.aEgo = 0.0
+    self.cs.out.gasPressed = False
+    self.cs.out.steeringDisengage = False
+    self.cs.pedal_interceptor_value = 0.0
+    self.cs.cruise_buttons = 0
+    self.cs.prev_cruise_buttons = 0
+    self.cs.pedal_timeout = False
+    self.cs.pccEvent = None
+    self.cs.preap_cc_cancel_needed = False
+    self.cc = SimpleNamespace(
+      actuators=SimpleNamespace(accel=0.2),
+      longActive=True,
+      orientationNED=[],
+    )
+    self.controller = PreAPLongController()
+    self.controller.pedal_authority.state = PedalAuthorityState.ACTIVE
+    self.controller.prev_requested_long = True
+    self.can = TeslaCANPreAP({})
+
+  def _sync_bridge(self):
+    self.cs.cruiseEnabled = self.cs.engagement.cruiseEnabled
+    self.cs.enableLongControl = self.cs.engagement.enableLongControl
+    self.cs.enableJustCC = self.cs.engagement.enableJustCC
+    self.cs.pedal_speed_kph = self.cs.engagement.pedal_speed_kph
+
+  def _engage_long(self):
+    self.cs.engagement.cruiseEnabled = True
+    self.cs.engagement.enableLongControl = True
+    self.cs.engagement.pedal_speed_kph = 72.0
+    self._sync_bridge()
+
+  def _adapter_pause(self):
+    parsers = self.cs.get_can_parsers(self.cs.CP, self.cs.CP_SP)
+    packer = CANPacker("tesla_preap")
+    frames = []
+    for name, bus, values in (
+      ("EPAS_sysStatus", 0, {"EPAS_handsOnLevel": 2}),
+      ("DI_torque2", 0, {"DI_gear": 4}),
+      ("ESP_B", 0, {"ESP_vehicleSpeed": 72}),
+      ("STW_ACTN_RQ", 0, {"DTR_Dist_Rq": 255}),
+      ("GAS_SENSOR", 2, {"IDX": 2}),
+    ):
+      address, data, source = packer.make_can_msg(name, bus, values)
+      frames.append(CanData(address, data, source))
+    for parser in parsers.values():
+      parser.update([(2_000_000_000, frames)])
+    with patch("opendbc.car.tesla.preap.carstate._current_time_millis", return_value=2000):
+      self.cs.out, _ = self.cs.update(parsers)
+
+  def _sends(self, frame):
+    return self.controller.update(self.cc, self.cs, frame, self.can, 0, now_nanos=frame * 10_000_000)
+
+  def test_enabled_pedal_output_continues_through_hands_on_pause(self):
+    self._engage_long()
+    sends = self._sends(2)
+    self.assertTrue(sends)
+    enabled, _ = _decode_pedal_enable(sends[0])
+    self.assertTrue(enabled)
+    target = self.cs.engagement.pedal_speed_kph
+
+    self._adapter_pause()
+    self.assertTrue(self.cs.engagement.cruiseEnabled)
+    self.assertTrue(self.cs.engagement.enableLongControl)
+    self.assertAlmostEqual(self.cs.engagement.pedal_speed_kph, target)
+    self.assertFalse(self.cs.out.steeringDisengage)
+
+    sends = self._sends(4)
+    self.assertTrue(sends)
+    enabled, _ = _decode_pedal_enable(sends[0])
+    self.assertTrue(enabled)
+    self.assertTrue(self.cs.enableLongControl)
+    self.assertAlmostEqual(self.cs.engagement.pedal_speed_kph, target)
+
+  def test_inactive_long_does_not_start_pedal_during_pause(self):
+    self.cs.engagement.cruiseEnabled = True
+    self.cs.engagement.enableLongControl = False
+    self.cs.engagement.pedal_speed_kph = 0.0
+    self._sync_bridge()
+    self.controller.prev_requested_long = False
+    self._adapter_pause()
+    self.cs.engagement.process_buttons(
+      CruiseButtons.IDLE, CruiseButtons.IDLE, 1000, 20.0, "KPH", True, True, True, False,
+    )
+    self.cs._epas_hands = 0
+    self.cs.engagement.process_buttons(
+      CruiseButtons.MAIN, CruiseButtons.IDLE, 1100, 20.0, "KPH", True, True, True, False,
+    )
+    self.cs.engagement.process_buttons(
+      CruiseButtons.MAIN, CruiseButtons.IDLE, 1500, 20.0, "KPH", True, True, True, False,
+    )
+    self._sync_bridge()
+    self.assertFalse(self.cs.enableLongControl)
+    sends = self._sends(2)
+    if sends:
+      enabled, _ = _decode_pedal_enable(sends[0])
+      self.assertFalse(enabled)
 
 
 if __name__ == "__main__":
