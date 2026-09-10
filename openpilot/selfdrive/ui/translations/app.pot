@@ -868,6 +868,10 @@ msgid "Enable \"Always Offroad\" in Device panel, or turn vehicle off to toggle.
 msgstr ""
 
 #: openpilot/selfdrive/ui/sunnypilot/layouts/settings/vehicle/brands/tesla.py
+msgid "Which EPAS hands-on level pauses steering. 1 is lightest, 3 is heaviest. Default 2. Applies on the next drive."
+msgstr ""
+
+#: openpilot/selfdrive/ui/sunnypilot/layouts/settings/vehicle/brands/tesla.py
 msgid "Cooperative Steering (Beta)"
 msgstr ""
 
@@ -876,11 +880,15 @@ msgid "Hands-On Pause"
 msgstr ""
 
 #: openpilot/selfdrive/ui/sunnypilot/layouts/settings/vehicle/brands/tesla.py
-msgid "Off: steering takeover disengages. On: pause steering, not active cruise. Steering resumes 1 second after release; canceled cruise stays off."
+msgid "Off: takeover disengages. On: pause steering only; resume 1 second after release. Canceled cruise stays off. Applies next drive."
 msgstr ""
 
 #: openpilot/selfdrive/ui/sunnypilot/layouts/settings/vehicle/brands/tesla.py
 msgid "Enable \"Always Offroad\" in Device panel, or turn vehicle off to change."
+msgstr ""
+
+#: openpilot/selfdrive/ui/sunnypilot/layouts/settings/vehicle/brands/tesla.py
+msgid "Hands-On Level"
 msgstr ""
 
 #: openpilot/selfdrive/ui/sunnypilot/layouts/settings/vehicle/brands/tesla.py
@@ -909,6 +917,10 @@ msgstr ""
 
 #: openpilot/selfdrive/ui/sunnypilot/layouts/settings/vehicle/brands/tesla.py
 msgid "Allows the driver to provide limited steering input while openpilot is engaged."
+msgstr ""
+
+#: openpilot/selfdrive/ui/sunnypilot/layouts/settings/vehicle/brands/tesla.py
+msgid "Enable Hands-On Pause to change the level."
 msgstr ""
 
 #: openpilot/selfdrive/ui/sunnypilot/layouts/settings/vehicle/brands/tesla.py

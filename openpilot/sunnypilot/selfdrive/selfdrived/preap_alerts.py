@@ -1,14 +1,14 @@
 """MADS lat-prompt wrappers and leftover CarSpecificEventsSP helpers.
 
 NAP's EventName alert texts now live in selfdrive/selfdrived/events.py.
-This file keeps the MADS-only mapping (lkasEnable/lkasDisable) because NAP
-has no MADS, plus the symbols CarSpecificEventsSP still imports.
+This file keeps the MADS-only mapping (lkasEnable/lkasDisable/silentLkas*)
+because NAP has no MADS, plus the symbols CarSpecificEventsSP still imports.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from openpilot.cereal import log
+from openpilot.cereal import custom, log
 from opendbc.car.structs import car
 from opendbc.car.tesla.preap.carcontroller import PedalAuthorityState
 from opendbc.car.tesla.preap.sp.platform import is_preap_platform
@@ -19,6 +19,7 @@ AlertSize = log.SelfdriveState.AlertSize
 AlertStatus = log.SelfdriveState.AlertStatus
 VisualAlert = car.CarControl.HUDControl.VisualAlert
 AudibleAlert = log.SelfdriveState.AudibleAlert
+AudibleAlertSP = custom.SelfdriveStateSP.AudibleAlert
 
 
 @dataclass(frozen=True)
@@ -132,6 +133,18 @@ def preap_lkas_disable_alert(CP, CS, sm, metric, soft_disable_time, personality)
   return EngagementAlert(AudibleAlert.disengage)
 
 
+def preap_silent_lkas_enable_alert(CP, CS, sm, metric, soft_disable_time, personality) -> Alert:
+  if is_preap_platform(CP):
+    return EngagementAlert(AudibleAlertSP.promptSingleHigh)
+  return EngagementAlert(AudibleAlert.none)
+
+
+def preap_silent_lkas_disable_alert(CP, CS, sm, metric, soft_disable_time, personality) -> Alert:
+  if is_preap_platform(CP):
+    return EngagementAlert(AudibleAlertSP.promptSingleLow)
+  return EngagementAlert(AudibleAlert.none)
+
+
 def radar_state_has_fault(radar_state) -> bool:
   """True when production RadarState.radarErrors reports a radar/config fault.
 
@@ -164,3 +177,5 @@ def register_preap_alerts() -> None:
   EventNameSP = custom.OnroadEventSP.EventName
   EVENTS_SP[EventNameSP.lkasEnable] = {ET.ENABLE: preap_lkas_enable_alert}
   EVENTS_SP[EventNameSP.lkasDisable] = {ET.USER_DISABLE: preap_lkas_disable_alert}
+  EVENTS_SP[EventNameSP.silentLkasEnable] = {ET.ENABLE: preap_silent_lkas_enable_alert}
+  EVENTS_SP[EventNameSP.silentLkasDisable] = {ET.USER_DISABLE: preap_silent_lkas_disable_alert}

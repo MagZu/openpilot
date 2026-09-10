@@ -226,6 +226,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"SubaruStopAndGoManualParkingBrake", {PERSISTENT | BACKUP, BOOL, "0"}},
     {"TeslaCoopSteering", {PERSISTENT | BACKUP, BOOL, "0"}},
     {"TeslaPreapHandsOnPause", {PERSISTENT | BACKUP, BOOL, "0"}},
+    {"TeslaPreapHandsOnLevel", {PERSISTENT | BACKUP, INT, "2"}},
     {"TeslaMadsScreenButton", {PERSISTENT | BACKUP, INT, "0"}},
 
     // Pre-AP Tesla (NAP) retained keys. Shared sunnypilot leaves NAPForcePreAP

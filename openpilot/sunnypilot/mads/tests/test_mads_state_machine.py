@@ -144,3 +144,66 @@ class TestMADSStateMachine:
         self.state_machine.update()
         assert self.state_machine.state == state
         self.clear_events()
+
+  def _begin_step(self, *, long_active: bool):
+    self.mads.selfdrive.enabled = long_active
+    self.mads.selfdrive.state_machine.current_alert_types = [ET.PERMANENT]
+
+  def test_paused_to_enabled_appends_enable_while_long_active(self):
+    self._begin_step(long_active=True)
+    self.state_machine.state = State.paused
+    self.events_sp.add(EventNameSP.silentLkasEnable)
+    self.state_machine.update()
+    assert self.state_machine.state == State.enabled
+    assert ET.ENABLE in self.mads.selfdrive.state_machine.current_alert_types
+    self.clear_events()
+
+  def test_disabled_to_enabled_suppresses_enable_while_long_active(self):
+    self._begin_step(long_active=True)
+    self.state_machine.state = State.disabled
+    self.events_sp.add(EventNameSP.lkasEnable)
+    self.state_machine.update()
+    assert self.state_machine.state == State.enabled
+    assert ET.ENABLE not in self.mads.selfdrive.state_machine.current_alert_types
+    self.clear_events()
+
+  def test_disabled_to_enabled_appends_enable_when_long_inactive(self):
+    self._begin_step(long_active=False)
+    self.state_machine.state = State.disabled
+    self.events_sp.add(EventNameSP.lkasEnable)
+    self.state_machine.update()
+    assert self.state_machine.state == State.enabled
+    assert ET.ENABLE in self.mads.selfdrive.state_machine.current_alert_types
+    self.clear_events()
+
+  def test_paused_resume_does_not_reappend_enable(self):
+    self._begin_step(long_active=True)
+    self.state_machine.state = State.paused
+    self.events_sp.add(EventNameSP.silentLkasEnable)
+    self.state_machine.update()
+    assert self.state_machine.state == State.enabled
+    self._begin_step(long_active=True)
+    self.state_machine.update()
+    assert self.state_machine.state == State.enabled
+    assert ET.ENABLE not in self.mads.selfdrive.state_machine.current_alert_types
+    self.clear_events()
+
+  def test_hard_user_disable_from_pause_appends_while_long_active(self):
+    self._begin_step(long_active=True)
+    self.state_machine.state = State.paused
+    self.events_sp.add(EventNameSP.lkasDisable)
+    self.state_machine.update()
+    assert self.state_machine.state == State.disabled
+    assert ET.USER_DISABLE in self.mads.selfdrive.state_machine.current_alert_types
+    assert ET.ENABLE not in self.mads.selfdrive.state_machine.current_alert_types
+    self.clear_events()
+
+  def test_paused_no_entry_blocks_enable_alert(self):
+    self._begin_step(long_active=True)
+    self.state_machine.state = State.paused
+    self.events_sp.add(EventNameSP.silentLkasEnable)
+    self.events_sp.add(EventNameSP.silentBrakeHold)
+    self.state_machine.update()
+    assert self.state_machine.state == State.paused
+    assert ET.ENABLE not in self.mads.selfdrive.state_machine.current_alert_types
+    self.clear_events()

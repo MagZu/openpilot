@@ -43,6 +43,21 @@ def test_preap_only_keys_rejected_on_modern():
   assert evaluate_param_write("MadsSteeringMode", 1, MODERN).allow
 
 
+def test_next_drive_hands_on_pause_and_level():
+  assert evaluate_param_write("TeslaPreapHandsOnPause", True, PREAP).allow
+  assert evaluate_param_write("TeslaPreapHandsOnPause", False, PREAP).allow
+  assert evaluate_param_write("TeslaPreapHandsOnPause", "0", PREAP).allow
+  assert not evaluate_param_write("TeslaPreapHandsOnPause", "maybe", PREAP).allow
+  assert evaluate_param_write("TeslaPreapHandsOnLevel", 1, PREAP).allow
+  assert evaluate_param_write("TeslaPreapHandsOnLevel", 2, PREAP).allow
+  assert evaluate_param_write("TeslaPreapHandsOnLevel", 3, PREAP).allow
+  assert not evaluate_param_write("TeslaPreapHandsOnLevel", 0, PREAP).allow
+  assert not evaluate_param_write("TeslaPreapHandsOnLevel", 4, PREAP).allow
+  assert not evaluate_param_write("TeslaPreapHandsOnLevel", True, PREAP).allow
+  assert not evaluate_param_write("TeslaPreapHandsOnPause", True, MODERN).allow
+  assert not evaluate_param_write("TeslaPreapHandsOnLevel", 2, MODERN).allow
+
+
 def test_hardware_rejected_on_modern_and_preap():
   for caps in (PREAP, MODERN):
     assert not evaluate_param_write("NAPRadarOffset", 0.1, caps).allow

@@ -5,6 +5,7 @@ This file is part of sunnypilot and is licensed under the MIT License.
 See the LICENSE.md file in the root directory for more details.
 """
 from opendbc.sunnypilot.car.tesla.values import TeslaFlagsSP
+from opendbc.car.tesla.preap.constants import parse_hands_on_level_param
 from openpilot.selfdrive.ui.sunnypilot.layouts.settings.vehicle.brands.base import BrandSettings
 from openpilot.selfdrive.ui.ui_state import ui_state
 from opendbc.car.tesla.preap.sp.platform import is_preap_ui_platform
@@ -34,9 +35,21 @@ class TeslaSettings(BrandSettings):
     self.hands_on_pause_toggle = toggle_item_sp(
       tr("Hands-On Pause"),
       tr(
-        "Off: steering takeover disengages. On: pause steering, not active cruise. Steering resumes 1 second after release; canceled cruise stays off.",
+        "Off: takeover disengages. On: pause steering only; resume 1 second after release. Canceled cruise stays off. Applies next drive.",
       ),
       param="TeslaPreapHandsOnPause",
+      callback=self._on_pause_changed,
+    )
+    level = parse_hands_on_level_param(ui_state.params.get("TeslaPreapHandsOnLevel", return_default=True))
+    self.hands_on_level = multiple_button_item_sp(
+      title=lambda: tr("Hands-On Level"),
+      description=tr(
+        "Which EPAS hands-on level pauses steering. 1 is lightest, 3 is heaviest. Default 2. Applies on the next drive.",
+      ),
+      buttons=["1", "2", "3"],
+      selected_index=level - 1,
+      callback=self._on_hands_on_level,
+      inline=False,
     )
     self.mads_screen_button = multiple_button_item_sp(
       title=lambda: tr("MADS Screen Activation"),
@@ -45,7 +58,14 @@ class TeslaSettings(BrandSettings):
       param="TeslaMadsScreenButton",
       inline=False,
     )
-    self.items = [self.coop_steering_toggle, self.hands_on_pause_toggle, self.mads_screen_button]
+    self.items = [self.coop_steering_toggle, self.hands_on_pause_toggle, self.hands_on_level, self.mads_screen_button]
+
+  def _on_pause_changed(self, _state):
+    self.update_settings()
+
+  def _on_hands_on_level(self, index: int) -> None:
+    if 0 <= index <= 2:
+      ui_state.params.put("TeslaPreapHandsOnLevel", index + 1)
 
   def update_settings(self):
     is_metric = ui_state.is_metric
@@ -73,6 +93,23 @@ class TeslaSettings(BrandSettings):
     pause_available = ui_state.CP_SP is not None and bool(getattr(ui_state.CP_SP, "madsHandsOnPauseAvailable", False))
     self.hands_on_pause_toggle.set_visible(is_preap and pause_available)
     self.hands_on_pause_toggle.action_item.set_enabled(offroad)
+
+    pause_on = bool(self.hands_on_pause_toggle.action_item.get_state())
+    level = parse_hands_on_level_param(ui_state.params.get("TeslaPreapHandsOnLevel", return_default=True))
+    self.hands_on_level.action_item.set_selected_button(level - 1)
+    level_visible = bool(is_preap and pause_available)
+    self.hands_on_level.set_visible(level_visible)
+    self.hands_on_level.action_item.set_enabled(level_visible and pause_on and offroad)
+    level_desc = tr(
+      "Which EPAS hands-on level pauses steering. 1 is lightest, 3 is heaviest. Default 2. Applies on the next drive.",
+    )
+    if not offroad:
+      level_desc = (
+        f"<b>{tr('Enable \"Always Offroad\" in Device panel, or turn vehicle off to change.')}</b><br><br>{level_desc}"
+      )
+    elif not pause_on:
+      level_desc = f"<b>{tr('Enable Hands-On Pause to change the level.')}</b><br><br>{level_desc}"
+    self.hands_on_level.set_description(level_desc)
 
     mads_screen_button_desc = (
       f"{tr('Use a multi-finger press on the infotainment screen to toggle MADS.')} " +

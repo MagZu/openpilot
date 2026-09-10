@@ -11,6 +11,7 @@ from openpilot.cereal import log, custom
 
 from opendbc.car import structs
 from opendbc.car.tesla.preap.sp.platform import is_preap_platform
+from opendbc.car.tesla.preap.constants import get_hands_on_disengage_level
 from opendbc.sunnypilot.car.tesla.values import TeslaFlagsSP
 from opendbc.car.hyundai.values import HyundaiFlags
 from openpilot.common.params import Params
@@ -30,7 +31,6 @@ SafetyModel = structs.CarParams.SafetyModel
 
 SET_SPEED_BUTTONS = (ButtonType.accelCruise, ButtonType.resumeCruise, ButtonType.decelCruise, ButtonType.setCruise)
 IGNORED_SAFETY_MODES = (SafetyModel.silent, SafetyModel.noOutput)
-HANDS_ON_PAUSE_LEVEL = 2
 HANDS_ON_RESUME_US = 1_000_000
 # Same 200-sample bound already used for controlsMismatchLateral. Pending first
 # grant uses it; a drop after grant is loss and disables immediately.
@@ -80,6 +80,10 @@ class ModularAssistiveDrivingSystem:
       and bool(getattr(self.CP_SP, "madsHandsOnPauseAvailable", False))
       and bool(int(getattr(self.CP_SP, "flags", 0) or 0) & int(TeslaFlagsSP.PREAP_HANDS_ON_PAUSE))
     )
+    safety_param = 0
+    if getattr(self.CP, "safetyConfigs", None):
+      safety_param = int(getattr(self.CP.safetyConfigs[0], "safetyParam", 0) or 0)
+    self._hands_on_disengage_level = get_hands_on_disengage_level(safety_param)
     self._hands_on_steering_inhibited = False
     self._hands_on_clear_timing = False
     self._hands_on_clear_ts = 0
@@ -254,8 +258,8 @@ class ModularAssistiveDrivingSystem:
       return
 
     level = int(CS.handsOnLevel or 0)
-    host_hands = level >= HANDS_ON_PAUSE_LEVEL
-    host_clear = level < HANDS_ON_PAUSE_LEVEL
+    host_hands = level >= self._hands_on_disengage_level
+    host_clear = level < self._hands_on_disengage_level
 
     if host_hands or panda_inhibited:
       self._hands_on_steering_inhibited = True
@@ -397,7 +401,7 @@ class ModularAssistiveDrivingSystem:
             self.events_sp.add(EventNameSP.pedalPressedAlertOnly)
 
     if self._hands_on_pause_available:
-      hands_high = int(getattr(CS, "handsOnLevel", 0) or 0) >= HANDS_ON_PAUSE_LEVEL
+      hands_high = int(getattr(CS, "handsOnLevel", 0) or 0) >= self._hands_on_disengage_level
       if hands_high or self._hands_on_steering_inhibited:
         if self.events_sp.has(EventNameSP.lkasEnable):
           self.events_sp.remove(EventNameSP.lkasEnable)

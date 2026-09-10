@@ -38,6 +38,18 @@ def _reboot_on_toggle(_):
   _reboot_dialog()
 
 
+def _hands_on_pause_available() -> bool:
+  return ui_state.CP_SP is not None and bool(getattr(ui_state.CP_SP, "madsHandsOnPauseAvailable", False))
+
+
+def _hands_on_pause_enabled() -> bool:
+  return ui_state.is_offroad() and _hands_on_pause_available()
+
+
+def _hands_on_level_enabled() -> bool:
+  return _hands_on_pause_enabled() and ui_state.params.get_bool("TeslaPreapHandsOnPause")
+
+
 def _confirm_then_flash(slider_title: str, runner_title: str, instructions: str, module: str):
   """Slide-to-confirm dialog before launching a destructive EPAS script.
 
@@ -208,6 +220,19 @@ class NAPLayoutMici(NavScroller):
 
     adaptive_accel = BigParamControl("adaptive accel limits", NAPParamKeys.ADAPTIVE_ACCEL)
 
+    # Next drive: frozen into safetyParam at interface init, like BIG TeslaSettings.
+    hands_on_pause = BigParamControl("hands-on pause", "TeslaPreapHandsOnPause")
+    hands_on_pause.set_visible(_hands_on_pause_available)
+    hands_on_pause.set_enabled(_hands_on_pause_enabled)
+    hands_on_level = BigMultiValueParamToggle(
+      "hands-on level",
+      "TeslaPreapHandsOnLevel",
+      values=[1, 2, 3],
+      labels=["1", "2", "3"],
+      default_value=2,
+    )
+    hands_on_level.set_visible(_hands_on_pause_available)
+    hands_on_level.set_enabled(_hands_on_level_enabled)
     # ── Pedal hardware ───────────────────────────────
     # default_value=2 matches NAPPedalCanBus declared default in params_keys.h
     # and the runtime fallback ("any nonzero is bus 2"). If the param is set
@@ -274,6 +299,8 @@ class NAPLayoutMici(NavScroller):
     self._scroller.add_widgets([
       pedal_enabled,
       adaptive_accel,
+      hands_on_pause,
+      hands_on_level,
       pedal_can_bus,
       pedal_calib_status,
       calibrate_pedal_btn,

@@ -118,7 +118,16 @@ def test_pedal_acquisition_failure_keeps_lateral_and_surfaces_alert():
       alpha_long=False, is_release_sp=False, docs=False,
     )
     interface = CarInterface(cp, cp_sp)
-    drive_packet = _preap_can_packet("DI_torque2", {"DI_gear": 4})
+    packer = CANPacker("tesla_preap")
+    drive_frames = []
+    messages: tuple[tuple[str, dict[str, float]], ...] = (
+      ("DI_torque2", {"DI_gear": 4}),
+      ("SDM1", {"SDM_bcklDrivStatus": 1}),
+    )
+    for message, values in messages:
+      address, dat, bus = packer.make_can_msg(message, 0, values)
+      drive_frames.append(CanData(address, dat, bus))
+    drive_packet = [(1, drive_frames)]
     interface.update(drive_packet)
 
     internal_state = interface.CS

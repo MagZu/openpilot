@@ -969,13 +969,15 @@ class TestPausePedalOutputContinuity(unittest.TestCase):
     parsers = self.cs.get_can_parsers(self.cs.CP, self.cs.CP_SP)
     packer = CANPacker("tesla_preap")
     frames = []
-    for name, bus, values in (
+    messages: tuple[tuple[str, int, dict[str, float]], ...] = (
       ("EPAS_sysStatus", 0, {"EPAS_handsOnLevel": 2}),
       ("DI_torque2", 0, {"DI_gear": 4}),
+      ("SDM1", 0, {"SDM_bcklDrivStatus": 1}),
       ("ESP_B", 0, {"ESP_vehicleSpeed": 72}),
       ("STW_ACTN_RQ", 0, {"DTR_Dist_Rq": 255}),
       ("GAS_SENSOR", 2, {"IDX": 2}),
-    ):
+    )
+    for name, bus, values in messages:
       address, data, source = packer.make_can_msg(name, bus, values)
       frames.append(CanData(address, data, source))
     for parser in parsers.values():

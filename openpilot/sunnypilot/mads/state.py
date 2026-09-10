@@ -97,7 +97,9 @@ class StateMachine:
                 self.state = State.overriding
               else:
                 self.state = State.enabled
-              self.add_current_alert_types(ET.ENABLE)
+              # Resume chime is independent of OP long; do not reuse the
+              # disabled->enabled gate that suppresses initial engage.
+              self.ss_state_machine.current_alert_types.append(ET.ENABLE)
 
         # OVERRIDING
         elif self.state == State.overriding:

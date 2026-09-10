@@ -223,6 +223,8 @@ class TestTeslaPreAPSettings:
   def test_preap_vehicle_keys_present(self, schema):
     vs = schema["vehicle_settings"]["tesla"]
     keys = {item["key"] for item in vs.get("items", [])}
+    assert "TeslaPreapHandsOnPause" in keys
+    assert "TeslaPreapHandsOnLevel" in keys
     assert "NAPFollowDistance" in keys
     assert "NAPPedalEnabled" in keys
     assert "NAPPedalCanBus" in keys
@@ -246,12 +248,18 @@ class TestTeslaPreAPSettings:
     follow = _find_item(schema, "NAPFollowDistance")
     assert follow is not None
     assert not follow.get("needs_onroad_cycle")
-    for key in ("NAPPedalEnabled", "NAPPedalCanBus", "NAPRadarEnabled", "NAPRadarBehindNosecone"):
+    for key in ("NAPPedalEnabled", "NAPPedalCanBus", "NAPRadarEnabled", "NAPRadarBehindNosecone",
+                "TeslaPreapHandsOnPause", "TeslaPreapHandsOnLevel"):
       item = _find_item(schema, key)
       assert item is not None, key
       assert item.get("needs_onroad_cycle") is True
       assert "offroad_only" in _flatten_rule_types(item.get("enablement"))
     assert _find_item(schema, "NAPRadarOffset") is None
+
+  def test_hands_on_level_is_closed_range(self, schema):
+    level = _find_item(schema, "TeslaPreapHandsOnLevel")
+    assert level is not None
+    assert [opt["value"] for opt in level.get("options", [])] == [1, 2, 3]
 
   def test_tools_are_not_schema_keys(self, schema):
     from openpilot.sunnypilot.sunnylink.tools.generate_settings_schema import collect_all_keys

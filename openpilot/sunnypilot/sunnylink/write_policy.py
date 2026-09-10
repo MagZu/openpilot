@@ -18,6 +18,8 @@ FOLLOW_DISTANCE_MIN = 1
 FOLLOW_DISTANCE_MAX = 7
 STEERING_MODE_MIN = 0
 STEERING_MODE_MAX = 2
+HANDS_ON_LEVEL_MIN = 1
+HANDS_ON_LEVEL_MAX = 3
 PREAP_MODE_INDEPENDENT = 0
 
 # Hardware/calibration/radar and boot-lock keys stay local.
@@ -82,11 +84,15 @@ PREAP_LIVE_KEYS = frozenset({
 
 PREAP_NEXT_DRIVE_KEYS = frozenset({
   "MadsSteeringMode",
+  "TeslaPreapHandsOnPause",
+  "TeslaPreapHandsOnLevel",
 })
 
 # Pre-AP-only remote keys. MadsSteeringMode remains a modern Tesla setting.
 PREAP_ONLY_REMOTE_KEYS = frozenset({
   "NAPFollowDistance",
+  "TeslaPreapHandsOnPause",
+  "TeslaPreapHandsOnLevel",
 })
 
 
@@ -156,6 +162,19 @@ def evaluate_param_write(key: str, value, caps: dict | None = None, *,
     parsed = _as_int(value)
     if parsed is None or not (STEERING_MODE_MIN <= parsed <= STEERING_MODE_MAX):
       return WriteDecision(False, "invalid_steering_mode")
+    return WriteDecision(True)
+
+  if key == "TeslaPreapHandsOnPause":
+    if value not in (True, False, 0, 1, "0", "1", b"0", b"1", "true", "True", "false", "False"):
+      return WriteDecision(False, "invalid_hands_on_pause")
+    return WriteDecision(True)
+
+  if key == "TeslaPreapHandsOnLevel":
+    if isinstance(value, bool):
+      return WriteDecision(False, "invalid_hands_on_level")
+    parsed = _as_int(value)
+    if parsed is None or not (HANDS_ON_LEVEL_MIN <= parsed <= HANDS_ON_LEVEL_MAX):
+      return WriteDecision(False, "invalid_hands_on_level")
     return WriteDecision(True)
 
   if key in PREAP_LIVE_KEYS or key in PREAP_NEXT_DRIVE_KEYS:

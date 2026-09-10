@@ -321,6 +321,10 @@ msgstr ""
 msgid "Enable ADB"
 msgstr "Activer ADB"
 
+#: openpilot/selfdrive/ui/sunnypilot/layouts/settings/vehicle/brands/tesla.py
+msgid "Enable Hands-On Pause to change the level."
+msgstr ""
+
 #: openpilot/selfdrive/ui/layouts/settings/toggles.py
 msgid "Enable Lane Departure Warnings"
 msgstr "Activer les alertes de sortie de voie"
@@ -428,6 +432,10 @@ msgstr "Allez sur https://connect.comma.ai sur votre téléphone"
 #: openpilot/selfdrive/ui/layouts/sidebar.py
 msgid "HIGH"
 msgstr "ÉLEVÉ"
+
+#: openpilot/selfdrive/ui/sunnypilot/layouts/settings/vehicle/brands/tesla.py
+msgid "Hands-On Level"
+msgstr ""
 
 #: openpilot/selfdrive/ui/sunnypilot/layouts/settings/vehicle/brands/tesla.py
 msgid "Hands-On Pause"
@@ -560,7 +568,7 @@ msgid "Off"
 msgstr ""
 
 #: openpilot/selfdrive/ui/sunnypilot/layouts/settings/vehicle/brands/tesla.py
-msgid "Off: steering takeover disengages. On: pause steering, not active cruise. Steering resumes 1 second after release; canceled cruise stays off."
+msgid "Off: takeover disengages. On: pause steering only; resume 1 second after release. Canceled cruise stays off. Applies next drive."
 msgstr ""
 
 #: openpilot/selfdrive/ui/widgets/setup.py
@@ -930,6 +938,10 @@ msgstr "Bienvenue sur sunnypilot"
 #: openpilot/selfdrive/ui/layouts/settings/toggles.py
 msgid "When enabled, pressing the accelerator pedal will disengage sunnypilot."
 msgstr "Lorsqu'activé, appuyer sur la pédale d'accélérateur désengagera sunnypilot."
+
+#: openpilot/selfdrive/ui/sunnypilot/layouts/settings/vehicle/brands/tesla.py
+msgid "Which EPAS hands-on level pauses steering. 1 is lightest, 3 is heaviest. Default 2. Applies on the next drive."
+msgstr ""
 
 #: openpilot/selfdrive/ui/layouts/sidebar.py
 msgid "Wi-Fi"

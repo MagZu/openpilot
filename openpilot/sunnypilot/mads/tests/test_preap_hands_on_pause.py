@@ -53,7 +53,7 @@ def _panda(inhibited, model=None):
   return ps
 
 
-def make_mads(hands_on=True, capability=True):
+def make_mads(hands_on=True, capability=True, safety_param=None):
   CP = structs.CarParams()
   CP.brand = "tesla"
   CP.carFingerprint = "TESLA_MODEL_S_PREAP"
@@ -64,6 +64,11 @@ def make_mads(hands_on=True, capability=True):
   CP_SP.madsHandsOnPauseAvailable = capability
   CP_SP.flags = int(TeslaFlagsSP.PREAP_HANDS_ON_PAUSE) if hands_on else 0
   CP_SP.madsMainCruiseInputKind = structs.CarParamsSP.MadsMainCruiseInputKind.momentary
+  if safety_param is None:
+    safety_param = 8 if hands_on else 0
+  safety = structs.CarParams.SafetyConfig()
+  safety.safetyParam = safety_param
+  CP.safetyConfigs = [safety]
   params = MagicMock()
   params.get_bool.side_effect = lambda k: k in ("Mads",)
   params.get.return_value = 0
@@ -439,6 +444,43 @@ class TestPreAPHandsOnPause(unittest.TestCase):
                allowed=False, override=True)
     self.assertTrue(sd.events_sp.has(EventNameSP.lkasDisable))
     self.assertEqual(mads.state_machine.state, State.disabled)
+
+  def test_level_one_pauses_at_hands_one(self):
+    mads, sd = make_mads(safety_param=8 | (1 << 8))
+    sd.sm = FakeSM([_panda(False)])
+    mads.update_events(FakeCS(hands_on_level=0))
+    self.assertFalse(mads._hands_on_steering_inhibited)
+    mads.update_events(FakeCS(hands_on_level=1))
+    self.assertTrue(mads._hands_on_steering_inhibited)
+    self.assertTrue(sd.events_sp.has(EventNameSP.silentLkasDisable))
+
+  def test_level_three_stays_enabled_at_hands_two(self):
+    mads, sd = make_mads(safety_param=8 | (3 << 8))
+    sd.sm = FakeSM([_panda(False)])
+    mads.update_events(FakeCS(hands_on_level=2))
+    self.assertFalse(mads._hands_on_steering_inhibited)
+    self.assertFalse(sd.events_sp.has(EventNameSP.silentLkasDisable))
+
+  def test_level_three_pauses_at_hands_three(self):
+    mads, sd = make_mads(safety_param=8 | (3 << 8))
+    sd.sm = FakeSM([_panda(False)])
+    mads.update_events(FakeCS(hands_on_level=3))
+    self.assertTrue(mads._hands_on_steering_inhibited)
+    self.assertTrue(sd.events_sp.has(EventNameSP.silentLkasDisable))
+
+  def test_panda_inhibit_pauses_irrespective_of_host_level(self):
+    mads, sd = make_mads(safety_param=8 | (3 << 8))
+    sd.sm = FakeSM([_panda(True)])
+    mads.update_events(FakeCS(hands_on_level=0))
+    self.assertTrue(mads._hands_on_steering_inhibited)
+    self.assertTrue(sd.events_sp.has(EventNameSP.silentLkasDisable))
+
+  def test_disengage_level_frozen_at_init(self):
+    mads, sd = make_mads(safety_param=8 | (3 << 8))
+    sd.CP.safetyConfigs[0].safetyParam = 8 | (1 << 8)
+    sd.sm = FakeSM([_panda(False)])
+    mads.update_events(FakeCS(hands_on_level=2))
+    self.assertFalse(mads._hands_on_steering_inhibited)
 
 if __name__ == "__main__":
   unittest.main()
