@@ -2,7 +2,6 @@
 
 #include <unistd.h>
 
-#include <algorithm>  // C3_USB_FIRST: std::find in Panda::list()
 #include <cassert>
 #include <stdexcept>
 #include <vector>
@@ -40,12 +39,13 @@ std::string Panda::hw_serial() {
 }
 
 std::vector<std::string> Panda::list() {
-  // C3_USB_FIRST: return USB pandas first (F4/DOS), then any SPI pandas (H7)
+  // C3_USB_FIRST: the comma 3's internal panda is an F4 on USB, so look there
+  // first. Only fall back to probing SPI when USB found nothing: a C3 has no
+  // SPI panda at all, and each probe blocks until it times out, which both
+  // floods the log and slows down every caller.
   std::vector<std::string> serials = PandaUsbHandle::list();
-  for (const auto &s : PandaSpiHandle::list()) {
-    if (std::find(serials.begin(), serials.end(), s) == serials.end()) {
-      serials.push_back(s);
-    }
+  if (serials.empty()) {
+    serials = PandaSpiHandle::list();
   }
   return serials;
 }

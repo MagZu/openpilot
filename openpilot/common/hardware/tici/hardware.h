@@ -21,6 +21,7 @@ public:
 
   static cereal::InitData::DeviceType get_device_type() {
     static const std::map<std::string, cereal::InitData::DeviceType> device_map = {
+      {"tici", cereal::InitData::DeviceType::TICI},  // C3_DEVICE_TYPE: dropped upstream with comma 3 support
       {"tizi", cereal::InitData::DeviceType::TIZI},
       {"mici", cereal::InitData::DeviceType::MICI}
     };
