@@ -28,9 +28,10 @@ function agnos_init {
   fi
 }
 
-# C3_DEPS: dependency roots, outside the repo so the updater cannot wipe them
+# C3_DEPS: runtime dependency root, outside the repo so the updater cannot wipe
+# it. The build-only root (/data/c3_deps/build) is added by SConstruct instead,
+# so it reaches scons without reaching build.py's spinner.
 C3_DEPS_RUNTIME="/data/c3_deps/runtime"
-C3_DEPS_BUILD="/data/c3_deps/build"
 
 function launch {
   # C3_SETUP: run first-time setup on a fresh install
@@ -113,9 +114,10 @@ function launch {
   # start manager
   cd openpilot/system/manager
   if [ ! -f $DIR/prebuilt ]; then
-    # C3_DEPS: raylib 6.0 is build-only. It must not be on the runtime PYTHONPATH,
-    # or the UI picks up its magic/DRM backend instead of AGNOS's Wayland one.
-    PYTHONPATH="$C3_DEPS_BUILD:$PYTHONPATH" ./build.py
+    # C3_DEPS: build.py runs with the runtime PYTHONPATH on purpose, so its
+    # spinner uses AGNOS's Wayland raylib. SConstruct adds the build-only
+    # raylib 6.0 for scons itself.
+    ./build.py
   fi
   ./manager.py
 

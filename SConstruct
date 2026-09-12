@@ -27,6 +27,13 @@ AddOption('--minimal',
           default=(not TICI and not release),
           help='the minimum build to run openpilot. no tests, tools, etc.')
 
+# C3_DEPS: raylib 6.0 is needed to bake fonts and to resolve raylib's install/
+# tree for linking, but it must reach scons and its subprocesses ONLY. It is
+# deliberately not exported from launch: build.py's spinner is a sibling
+# subprocess, and giving it raylib 6.0 means the magic/DRM backend, which cannot
+# init on AGNOS 12.6 - the spinner then segfaults and never appears.
+C3_BUILD_DEPS = "/data/c3_deps/build"
+
 submodule_python_paths = [
   Dir("#").abspath,
   Dir("#msgq_repo").abspath,
@@ -35,6 +42,9 @@ submodule_python_paths = [
   Dir("#teleoprtc_repo").abspath,
   Dir("#tinygrad_repo").abspath,
 ]
+if TICI and os.path.isdir(C3_BUILD_DEPS):
+  submodule_python_paths.insert(0, C3_BUILD_DEPS)
+
 for p in reversed(submodule_python_paths):
   if p not in sys.path:
     sys.path.insert(0, p)
