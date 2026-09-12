@@ -134,13 +134,24 @@ def main() -> None:
     cloudlog.exception("pandad.uncaught_exception")
 
   count = 0
+  no_panda_count = 0  # C3_F4_PANDA
   while not do_exit:
     try:
       cloudlog.event("pandad.flash_and_connect", count=count)
-      if (count % 2) == 0:
-        HARDWARE.reset_internal_panda()
-      else:
-        HARDWARE.recover_internal_panda()
+      # C3_F4_PANDA: the comma 3 internal panda is an F4 on USB and takes a few
+      # seconds to re-enumerate after a reset. Upstream resets (and every other
+      # pass forces DFU) on every iteration with no settle time, which an H7 on
+      # SPI wins and an F4 never does, so the panda is never seen. Only reset
+      # after an attempt that found nothing, wait for USB to come back, and
+      # escalate to DFU recovery only after repeated failures.
+      if no_panda_count > 0:
+        if no_panda_count % 3 == 0:
+          cloudlog.info("No pandas found, putting internal panda into DFU")
+          HARDWARE.recover_internal_panda()
+        else:
+          cloudlog.info("No pandas found, resetting internal panda")
+          HARDWARE.reset_internal_panda()
+        time.sleep(3)  # wait to come back up
       count += 1
 
       # Flash all Pandas in DFU mode
@@ -150,7 +161,10 @@ def main() -> None:
         time.sleep(1)
 
       panda_serials = Panda.list()
-      if len(panda_serials):
+      if not len(panda_serials):
+        no_panda_count += 1  # C3_F4_PANDA
+      else:
+        no_panda_count = 0  # C3_F4_PANDA
         # custom flasher for xnor's Rivian Longitudinal Upgrade Kit
         flash_rivian_long(panda_serials)
         # find the internal supported panda (e.g. skip external Black Panda)
