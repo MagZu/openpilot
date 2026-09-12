@@ -18,6 +18,10 @@ comma-deps-ncurses
 comma-deps-zeromq
 comma-deps-zstd
 
+# raylib 6.0 + its pyray binding. AGNOS 12.6's venv has raylib-python-cffi
+# 5.5.0.2, whose LoadFontData takes 6 args; 0.11.2 calls it with 7.
+comma-deps-raylib
+
 # USB panda support on C3 (see selfdrive/pandad, C3_USB_FIRST)
 comma-deps-libusb
 

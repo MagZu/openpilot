@@ -76,6 +76,11 @@ function launch {
   ln -sfn $(pwd) /data/pythonpath
   # C3_DEPS: c3_third_party first — comma-deps-* wheels AGNOS 12.6 does not ship (see setup_c3_preap.sh)
   export PYTHONPATH="$PWD/c3_third_party:$PWD"
+  # C3_DEPS: and their tools ahead of AGNOS's own, so the capnp compiler matches
+  # the capnp headers we build against (12.6 ships 1.0.2, the wheel is 1.0.1).
+  for _bin in "$PWD"/c3_third_party/*/install/bin; do
+    [ -d "$_bin" ] && export PATH="$_bin:$PATH"
+  done
 
   # submodule package symlinks for PYTHONPATH imports on device.
   # on PC these come from editable installs via pyproject.toml / uv.

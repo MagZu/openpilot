@@ -181,6 +181,9 @@ if arch == "larch64":
   env.Append(LIBPATH=[
     "/usr/lib/aarch64-linux-gnu",
   ])
+  # C3_HEADERS: AGNOS 12.6 (comma 3) does not ship the QCOM/MSM kernel headers
+  # that newer AGNOS provides in /usr/include, so use the vendored copies.
+  env.Append(CPPPATH=["#openpilot/third_party/linux/include"])
   arch_flags = ["-D__TICI__", "-mcpu=cortex-a57", "-DQCOM2"]
   env.Append(CCFLAGS=arch_flags)
   env.Append(CXXFLAGS=arch_flags)
