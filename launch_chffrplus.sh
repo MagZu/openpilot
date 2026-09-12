@@ -28,6 +28,10 @@ function agnos_init {
   fi
 }
 
+# C3_DEPS: dependency roots, outside the repo so the updater cannot wipe them
+C3_DEPS_RUNTIME="/data/c3_deps/runtime"
+C3_DEPS_BUILD="/data/c3_deps/build"
+
 function launch {
   # C3_SETUP: run first-time setup on a fresh install
   if [ ! -f /data/c3_first_run ]; then
@@ -74,13 +78,21 @@ function launch {
 
   # handle pythonpath
   ln -sfn $(pwd) /data/pythonpath
-  # C3_DEPS: c3_third_party first — comma-deps-* wheels AGNOS 12.6 does not ship (see setup_c3_preap.sh)
-  export PYTHONPATH="$PWD/c3_third_party:$PWD"
+  # C3_DEPS: comma-deps-* wheels AGNOS 12.6 does not ship (see setup_c3_preap.sh).
+  # They live outside the repo on purpose: the updater swaps $DIR for a fresh
+  # checkout, which would delete anything untracked inside it.
+  export PYTHONPATH="$C3_DEPS_RUNTIME:$PWD"
   # C3_DEPS: and their tools ahead of AGNOS's own, so the capnp compiler matches
   # the capnp headers we build against (12.6 ships 1.0.2, the wheel is 1.0.1).
-  for _bin in "$PWD"/c3_third_party/*/install/bin; do
+  for _bin in "$C3_DEPS_RUNTIME"/*/install/bin; do
     [ -d "$_bin" ] && export PATH="$_bin:$PATH"
   done
+
+  # C3_DISPLAY: 0.11.2 expects magic, comma's DRM compositor. AGNOS 12.6 predates
+  # it and runs Weston, so the UI renders as a Wayland client against AGNOS's own
+  # raylib (see c3_build_deps/requirements-build.txt). Point it at Weston's socket.
+  export XDG_RUNTIME_DIR="/var/tmp/weston"
+  export WAYLAND_DISPLAY="wayland-0"
 
   # submodule package symlinks for PYTHONPATH imports on device.
   # on PC these come from editable installs via pyproject.toml / uv.
@@ -101,7 +113,9 @@ function launch {
   # start manager
   cd openpilot/system/manager
   if [ ! -f $DIR/prebuilt ]; then
-    ./build.py
+    # C3_DEPS: raylib 6.0 is build-only. It must not be on the runtime PYTHONPATH,
+    # or the UI picks up its magic/DRM backend instead of AGNOS's Wayland one.
+    PYTHONPATH="$C3_DEPS_BUILD:$PYTHONPATH" ./build.py
   fi
   ./manager.py
 

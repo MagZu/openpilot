@@ -1,0 +1,21 @@
+# Build-only dependencies for comma 3 (tici). Installed into c3_build_deps/,
+# which is put on PYTHONPATH for scons ONLY — never for the running openpilot.
+#
+# Why raylib is split out:
+#
+# openpilot 0.11.2 builds against comma's raylib 6.0, whose backend talks to
+# "magic", comma's small DRM compositor that replaced Weston in openpilot
+# 0.10.1. AGNOS 12.6 predates magic: it runs the Thundercomm Weston fork on a
+# 4.9 downstream kernel, and comma-deps-raylib's DRM fallback cannot drive it,
+# so the UI dies with "Failed to initialize drm" and then "Failed to get EGL
+# display". Plain DRM modesetting does work on 12.6 (modetest sets the mode),
+# so this is the backend, not the hardware.
+#
+# AGNOS 12.6 ships its own comma raylib 5.5.0.2 built against Wayland, which
+# talks to the Weston that 12.6 actually runs. That one renders fine, EGL and
+# camera views included, so the UI runs against the venv's copy.
+#
+# The build still needs 6.0: font baking calls LoadFontData with 7 arguments
+# (5.5 takes 6), and selfdrive/ui/SConscript resolves raylib's install/ tree
+# for linking. Hence build here, run from the venv.
+comma-deps-raylib==6.0.0.1.post93

@@ -34,15 +34,22 @@ ln -sfn rednose_repo/rednose rednose
 ln -sfn teleoprtc_repo/teleoprtc teleoprtc
 ln -sfn tinygrad_repo/tinygrad tinygrad
 
-echo "[3/3] Installing native build dependencies into c3_third_party/..."
+echo "[3/3] Installing native dependencies..."
 # /tmp is a 150MB tmpfs on AGNOS, too small to unpack these wheels.
 export TMPDIR="/data/tmp"
 mkdir -p "$TMPDIR"
 # --no-deps on purpose: we want only the native payloads. c3_third_party is first
 # on PYTHONPATH, so letting pip pull pure-python deps here (numpy, via acados)
 # would shadow the device venv's own copies.
-/usr/local/venv/bin/python -m pip install --target "$DIR/c3_third_party" --upgrade --no-deps \
+# Installed outside the repo: the updater replaces $DIR with a fresh checkout,
+# which deletes anything untracked inside it. The requirements lists stay in the
+# repo (tracked); only the installed trees live under /data/c3_deps.
+/usr/local/venv/bin/python -m pip install --target /data/c3_deps/runtime --upgrade --no-deps \
   -r "$DIR/c3_third_party/requirements-c3.txt"
+
+# Build-only, kept off the runtime path on purpose (see requirements-build.txt).
+/usr/local/venv/bin/python -m pip install --target /data/c3_deps/build --upgrade --no-deps \
+  -r "$DIR/c3_build_deps/requirements-build.txt"
 
 touch "$MARKER"
 echo ""
