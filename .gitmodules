@@ -4,7 +4,8 @@
   branch = naponsp-C3-alpha
 [submodule "opendbc"]
   path = opendbc_repo
-  url = https://github.com/NotAutopilot/opendbc.git
+  url = https://github.com/MagZu/opendbc.git
+  branch = naponsp-C3-buddy
 [submodule "msgq"]
   path = msgq_repo
   url = https://github.com/sunnypilot/msgq.git
