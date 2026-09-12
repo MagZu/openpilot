@@ -6,24 +6,30 @@
 # (see launch_chffrplus.sh). SConstruct imports each by bare module name and
 # reads INCLUDE_DIR / LIB_DIR from it, so real wheels work unmodified.
 #
+# Versions are pinned to what uv.lock resolves, NOT left to float. The post
+# numbers are not cosmetic: comma-deps-raylib 6.0.0.1.post103 ships no raygui
+# bindings, so the UI dies on rl.GuiTextAlignment, while the pinned post93 has
+# all 78 Gui* symbols. Re-sync these pins from uv.lock when rebasing onto a
+# newer naponsp-alpha.
+#
 # Must cover every entry in SConstruct's pkg_names.
-comma-deps-acados
-comma-deps-bzip2
-comma-deps-capnproto
-comma-deps-catch2
-comma-deps-eigen
-comma-deps-ffmpeg
-comma-deps-json11
-comma-deps-ncurses
-comma-deps-zeromq
-comma-deps-zstd
+comma-deps-acados==0.2.2.post95
+comma-deps-bzip2==1.0.8.post95
+comma-deps-capnproto==1.0.1.post93
+comma-deps-catch2==2.13.10.post93
+comma-deps-eigen==3.4.0.post93
+comma-deps-ffmpeg==7.1.0.post94
+comma-deps-json11==20170411.0.post93
+comma-deps-ncurses==6.5.post93
+comma-deps-zeromq==4.3.5.post93
+comma-deps-zstd==1.5.6.post93
 
-# raylib 6.0 + its pyray binding. AGNOS 12.6's venv has raylib-python-cffi
+# raylib 6.0 plus its pyray binding. AGNOS 12.6's venv has raylib-python-cffi
 # 5.5.0.2, whose LoadFontData takes 6 args; 0.11.2 calls it with 7.
-comma-deps-raylib
+comma-deps-raylib==6.0.0.1.post93
 
 # USB panda support on C3 (see selfdrive/pandad, C3_USB_FIRST)
-comma-deps-libusb
+comma-deps-libusb==1.0.29.post93
 
 # dbus, imported by the runtime
-jeepney
+jeepney==0.9.0
