@@ -158,6 +158,12 @@ class NAPLayout(Widget):
     self._main_items.append(self._radar_settings_btn)
     self._build_radar_items()
 
+    self._main_items.append(SectionHeader(tr("NAP Buddy")))
+    self._add_toggle(NAPParamKeys.BUDDY_IC_INTEGRATION, tr("Instrument Cluster Integration"),
+                     tr("Draw openpilot's lane path, lead car and status on the car's instrument "
+                        "cluster. Requires NAP Buddy hardware; does nothing without it. "
+                        "Display only - does not affect driving."))
+
     self._main_items.append(SectionHeader(tr("iBooster / Braking")))
     self._add_toggle(NAPParamKeys.IBOOSTER_ENABLED, tr("iBooster Enabled"),
                      tr("Enable the iBooster brake-by-wire system for electronic braking. (Not yet implemented)"),

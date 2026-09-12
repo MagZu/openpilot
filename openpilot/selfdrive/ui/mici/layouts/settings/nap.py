@@ -264,6 +264,9 @@ class NAPLayoutMici(NavScroller):
     radar_settings_btn = BigButton("radar settings", "open")
     radar_settings_btn.set_click_callback(lambda: gui_app.push_widget(RadarSettingsLayoutMici()))
 
+    # ── NAP Buddy (display-only) ─────────────────────
+    buddy_ic = BigParamControl("buddy ic integration", NAPParamKeys.BUDDY_IC_INTEGRATION)
+
     # ── iBooster (locked off) ────────────────────────
     ibooster_enabled = BigParamControl("ibooster enabled", NAPParamKeys.IBOOSTER_ENABLED)
     ibooster_enabled.set_enabled(False)
@@ -305,6 +308,7 @@ class NAPLayoutMici(NavScroller):
       pedal_calib_status,
       calibrate_pedal_btn,
       radar_settings_btn,
+      buddy_ic,
       ibooster_enabled,
       force_pre_ap,
       backup_epas_btn,

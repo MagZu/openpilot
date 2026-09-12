@@ -6,6 +6,8 @@ See the LICENSE.md file in the root directory for more details.
 """
 import time
 
+import numpy as np
+
 import openpilot.cereal.messaging as messaging
 from openpilot.cereal import log, custom
 
@@ -85,11 +87,59 @@ class ControlsExt(ModelStateBase):
     _lead.radar = src.radar
     _lead.radarTrackId = src.radarTrackId
 
+  # NAP Buddy IC integration. The instrument cluster draws the path from a cubic
+  # in car coordinates, so fit modelV2's predicted path here where the model is
+  # available and pass only the coefficients to the car layer. The IC renders at
+  # 2x scale, hence IC_LANE_SCALE.
+  NAP_BUDDY_IC_LANE_SCALE = 0.5
+  NAP_BUDDY_PATH_LENGTH_M = 100.0
+
+  @staticmethod
+  def get_nap_buddy_lanes(lanes, md) -> None:
+    """Fill CarControlSP.napBuddyLanes from modelV2. Leaves valid False if the
+    model has not produced a usable path yet, in which case the cluster keeps
+    drawing a flat one rather than something wrong."""
+    probs = md.laneLineProbs
+    x = np.asarray(md.position.x, dtype=float)
+    y = np.asarray(md.position.y, dtype=float)
+    if len(probs) < 4 or len(x) < 4 or len(x) != len(y):
+      return
+
+    # Only fit the portion of the path the cluster shows.
+    n = int(np.count_nonzero(x < ControlsExt.NAP_BUDDY_PATH_LENGTH_M))
+    if n < 4:
+      return
+
+    try:
+      coefs = np.polyfit(x[:n], y[:n], 3)
+    except (np.linalg.LinAlgError, ValueError):
+      return
+    if not np.all(np.isfinite(coefs)):
+      return
+
+    f = 1.0 / ControlsExt.NAP_BUDDY_IC_LANE_SCALE
+    lanes.valid = True
+    lanes.laneWidth = 4.0
+    lanes.leftLaneProb = float(probs[1])
+    lanes.rightLaneProb = float(probs[2])
+    lanes.leftEdgeProb = float(probs[0])
+    lanes.rightEdgeProb = float(probs[3])
+    # c1 is suppressed: the cluster derives heading from the path itself, and
+    # feeding it here double-counts and skews the drawn lane.
+    lanes.c0 = float(coefs[3])
+    lanes.c1 = 0.0
+    lanes.c2 = float(coefs[1]) * f * f
+    lanes.c3 = float(coefs[0]) * f * f * f
+
   def state_control_ext(self, sm: messaging.SubMaster) -> custom.CarControlSP:
     CC_SP = custom.CarControlSP.new_message()
 
     self.get_lead_data(CC_SP.leadOne, sm['radarState'].leadOne)
     self.get_lead_data(CC_SP.leadTwo, sm['radarState'].leadTwo)
+
+    # NAP Buddy IC lane geometry (display-only; the car layer gates on its own toggle)
+    if sm.valid.get('modelV2', False):
+      self.get_nap_buddy_lanes(CC_SP.napBuddyLanes, sm['modelV2'])
 
     # MADS state
     mads_src = sm['selfdriveStateSP'].mads

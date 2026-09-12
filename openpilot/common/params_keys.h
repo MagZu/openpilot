@@ -242,6 +242,7 @@ inline static std::unordered_map<std::string, ParamKeyAttributes> keys = {
     {"NAPPedalCalibMax", {PERSISTENT | BACKUP, FLOAT, "99.6"}},
     {"NAPPedalCalibZero", {PERSISTENT | BACKUP, FLOAT, "0.0"}},
     {"NAPAdaptiveAccel", {PERSISTENT | BACKUP, BOOL, "1"}},
+    {"NAPBuddyICIntegration", {PERSISTENT | BACKUP, BOOL}},  // NAP Buddy instrument cluster rendering, display-only
     {"NAPRadarEnabled", {PERSISTENT | BACKUP, BOOL}},
     {"NAPRadarBehindNosecone", {PERSISTENT | BACKUP, BOOL}},
     {"NAPRadarOffset", {PERSISTENT | BACKUP, FLOAT, "0.0"}},

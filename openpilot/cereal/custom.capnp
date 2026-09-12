@@ -415,6 +415,25 @@ struct CarControlSP @0xa5cd762cd951a455 {
   leadOne @2 :LeadData;
   leadTwo @3 :LeadData;
   intelligentCruiseButtonManagement @4 :IntelligentCruiseButtonManagement;
+  napBuddyLanes @5 :NapBuddyLanes;
+
+  # NAP Buddy IC integration — lane geometry for instrument cluster rendering.
+  # Computed in controlsd_ext where modelV2 lives, so the car layer does not
+  # need model access. Cubic path coefficients plus the probabilities the
+  # cluster uses to decide which lines to draw.
+  struct NapBuddyLanes {
+    valid @0 :Bool;
+    laneWidth @1 :Float32;
+    leftLaneProb @2 :Float32;
+    rightLaneProb @3 :Float32;
+    leftEdgeProb @4 :Float32;
+    rightEdgeProb @5 :Float32;
+    c0 @6 :Float32;
+    c1 @7 :Float32;
+    c2 @8 :Float32;
+    c3 @9 :Float32;
+  }
+
 
   struct Param {
     key @0 :Text;
