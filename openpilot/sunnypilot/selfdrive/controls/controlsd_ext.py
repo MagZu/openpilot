@@ -146,6 +146,10 @@ class ControlsExt(ModelStateBase):
     resolver = sm['longitudinalPlanSP'].speedLimit.resolver
     CC_SP.napBuddySpeedLimit = float(resolver.speedLimit) if resolver.speedLimitValid else 0.0
 
+    # NAP Buddy grey steering wheel. selfdriveState.engageable is the real
+    # "openpilot could engage now" signal; the car layer has no access to it.
+    CC_SP.napBuddyEngageable = bool(sm['selfdriveState'].engageable)
+
     # MADS state
     mads_src = sm['selfdriveStateSP'].mads
     CC_SP.mads.state = mads_src.state

@@ -419,6 +419,9 @@ struct CarControlSP @0xa5cd762cd951a455 {
   # Posted speed limit in m/s for the NAP Buddy cluster road-sign widget.
   # 0 when there is no valid limit, which renders as no sign.
   napBuddySpeedLimit @6 :Float32;
+  # Whether openpilot could be engaged right now (selfdriveState.engageable).
+  # Drives the grey "available" steering wheel on the NAP Buddy cluster.
+  napBuddyEngageable @7 :Bool;
 
   # NAP Buddy IC integration — lane geometry for instrument cluster rendering.
   # Computed in controlsd_ext where modelV2 lives, so the car layer does not
