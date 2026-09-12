@@ -309,8 +309,18 @@ class Tici(HardwareBase):
       gov = 'ondemand' if powersave_enabled else 'performance'
       sudo_write(gov, f'/sys/devices/system/cpu/cpufreq/policy{n}/scaling_governor')
       if not powersave_enabled:
-        # cap max core freq to 1689 Mhz
-        sudo_write('1689600', f'/sys/devices/system/cpu/cpufreq/policy{n}/scaling_max_freq')
+        # C3_CPU_FREQ: upstream caps the big cluster at 1689 MHz (commaai#38132), added for
+        # tizi/mici after the C3 was deprecated. On tici (SDM845, 2.8 GHz big cores) that cap
+        # starves core 4, where card, controlsd and selfdrived are all pinned: selfdrived's
+        # 100 Hz loop falls to ~90.6 Hz, right on Ratekeeper.lagging's 90 Hz threshold, so any
+        # extra load from engaging trips selfdrivedLagging -- "System Lagging" while driving and
+        # "Selfdrive Process Lagging: Reboot Your Device" blocking engagement. Measured on a C3:
+        # capped 90.6 Hz, uncapped 100.0 Hz. Run tici at its hardware max instead, as 0.11.1 did.
+        if self.get_device_type() == 'tici':
+          with open(f'/sys/devices/system/cpu/cpufreq/policy{n}/cpuinfo_max_freq') as f:
+            sudo_write(f.read().strip(), f'/sys/devices/system/cpu/cpufreq/policy{n}/scaling_max_freq')
+        else:
+          sudo_write('1689600', f'/sys/devices/system/cpu/cpufreq/policy{n}/scaling_max_freq')
 
     # *** IRQ config ***
 
