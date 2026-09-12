@@ -23,7 +23,13 @@ echo "=== comma 3 first-time setup ==="
 cd "$DIR"
 
 echo "[1/3] Initialising submodules..."
-git submodule update --init --depth 1
+# Shallow first since it is much faster on the device, but fall back to a full
+# fetch: --depth 1 can only reach a submodule's branch tip, and a pinned commit
+# stops being the tip as soon as another commit lands in that submodule.
+if ! git submodule update --init --depth 1; then
+  echo "shallow submodule fetch failed, retrying with full history..."
+  git submodule update --init
+fi
 
 echo "[2/3] Creating submodule package symlinks..."
 # Same links launch_chffrplus.sh makes; created here too so a manual scons run
