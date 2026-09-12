@@ -334,8 +334,14 @@ def hardware_thread(end_event, hw_queue) -> None:
     # only allow going onroad when:
     # - TIZI, or
     # - TICI and channel_type is "tici"
+    #
+    # C3_CHANNEL: upstream gates comma 3 on the branch resolving to a "-tici"
+    # channel, which only happens for the branch names in version.py's
+    # SP_BRANCH_MIGRATIONS. This branch exists to support comma 3, so every build
+    # of it is a tici build regardless of what the branch is called. Treat the
+    # combo as supported rather than renaming the branch to end in "-tici".
     build_metadata = get_build_metadata()
-    is_unsupported_combo = TICI and HARDWARE.get_device_type() == "tici" and build_metadata.channel_type != "tici"
+    is_unsupported_combo = False
     startup_conditions["not_tici"] = not is_unsupported_combo
     onroad_conditions["not_tici"] = not is_unsupported_combo
     set_offroad_alert("Offroad_TiciSupport", is_unsupported_combo, extra_text=build_metadata.channel)
