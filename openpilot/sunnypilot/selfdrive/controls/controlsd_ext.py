@@ -33,7 +33,7 @@ class ControlsExt(ModelStateBase):
     self.CP_SP = messaging.log_from_bytes(params.get("CarParamsSP", block=True), custom.CarParamsSP)
     cloudlog.info("controlsd_ext got CarParamsSP")
 
-    self.sm_services_ext = ['radarState', 'selfdriveStateSP']
+    self.sm_services_ext = ['radarState', 'selfdriveStateSP', 'longitudinalPlanSP']
     self.pm_services_ext = ['carControlSP']
 
   def initialize_lateral_control(self, lac, CI, dt):
@@ -140,6 +140,11 @@ class ControlsExt(ModelStateBase):
     # NAP Buddy IC lane geometry (display-only; the car layer gates on its own toggle)
     if sm.valid.get('modelV2', False):
       self.get_nap_buddy_lanes(CC_SP.napBuddyLanes, sm['modelV2'])
+
+    # NAP Buddy road-sign widget. The posted limit, not the offset-adjusted
+    # target: the cluster draws a speed-limit sign, not openpilot's set point.
+    resolver = sm['longitudinalPlanSP'].speedLimit.resolver
+    CC_SP.napBuddySpeedLimit = float(resolver.speedLimit) if resolver.speedLimitValid else 0.0
 
     # MADS state
     mads_src = sm['selfdriveStateSP'].mads

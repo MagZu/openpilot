@@ -416,6 +416,9 @@ struct CarControlSP @0xa5cd762cd951a455 {
   leadTwo @3 :LeadData;
   intelligentCruiseButtonManagement @4 :IntelligentCruiseButtonManagement;
   napBuddyLanes @5 :NapBuddyLanes;
+  # Posted speed limit in m/s for the NAP Buddy cluster road-sign widget.
+  # 0 when there is no valid limit, which renders as no sign.
+  napBuddySpeedLimit @6 :Float32;
 
   # NAP Buddy IC integration — lane geometry for instrument cluster rendering.
   # Computed in controlsd_ext where modelV2 lives, so the car layer does not
