@@ -34,7 +34,10 @@ from openpilot.sunnypilot.selfdrive.controls.lib.relc import RoadEdgeLaneChangeC
 PROCESS_NAME = "openpilot.selfdrive.modeld.modeld"
 SEND_RAW_PRED = os.getenv('SEND_RAW_PRED')
 
-LAT_SMOOTH_SECONDS = 0.0
+# C3_LAT_SMOOTH: comma 3 stutters at the wheel with no lateral smoothing, as it
+# did on 0.11.1. 0.1 settles it. Also feeds lat_delay below, so the delay
+# compensation follows the smoothing, same as the 0.11.1 branch.
+LAT_SMOOTH_SECONDS = 0.1
 LONG_SMOOTH_SECONDS = 0.3
 MIN_LAT_CONTROL_SPEED = 0.3
 
