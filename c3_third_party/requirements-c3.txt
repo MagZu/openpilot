@@ -1,0 +1,25 @@
+# Native build dependencies for comma 3 (tici) on AGNOS 12.6.
+#
+# 0.11.2 gets these from comma-deps-* wheels installed into the device venv.
+# AGNOS 12.6 predates that, so we install them repo-locally with
+# `pip install --target c3_third_party` and put that dir first on PYTHONPATH
+# (see launch_chffrplus.sh). SConstruct imports each by bare module name and
+# reads INCLUDE_DIR / LIB_DIR from it, so real wheels work unmodified.
+#
+# Must cover every entry in SConstruct's pkg_names.
+comma-deps-acados
+comma-deps-bzip2
+comma-deps-capnproto
+comma-deps-catch2
+comma-deps-eigen
+comma-deps-ffmpeg
+comma-deps-json11
+comma-deps-ncurses
+comma-deps-zeromq
+comma-deps-zstd
+
+# USB panda support on C3 (see selfdrive/pandad, C3_USB_FIRST)
+comma-deps-libusb
+
+# dbus, imported by the runtime
+jeepney

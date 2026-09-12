@@ -1,0 +1,5 @@
+# Populated on-device by setup_c3_preap.sh (pip install --target).
+# Only the requirements list and this file are tracked.
+*
+!.gitignore
+!requirements-c3.txt

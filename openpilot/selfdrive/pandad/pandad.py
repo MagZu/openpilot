@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # simple pandad wrapper that updates the panda first
 import os
+import json
 import usb1
 import time
 import signal
@@ -15,20 +16,49 @@ from openpilot.common.swaglog import cloudlog
 from openpilot.sunnypilot.selfdrive.pandad.rivian_long_flasher import flash_rivian_long
 
 
-def get_expected_signature() -> bytes:
-  fn = os.path.join(FW_PATH, McuType.H7.config.app_fn)
+# C3_F4_PANDA: the comma 3 internal panda is an F4/DOS, whose firmware is built
+# on-device from panda/F4/ rather than shipped prebuilt.
+_F4_BUILD_SH = os.path.join(BASEDIR, "panda", "F4", "build.sh")
+_F4_CONFIG = os.path.join(BASEDIR, "panda", "F4", "config.json")
+_F4_FW_PATH = os.path.join(BASEDIR, "panda", "board", "obj", "panda.bin.signed")
+
+
+def f4_auto_compile_if_needed() -> None:
+  try:
+    with open(_F4_CONFIG) as f:
+      cfg = json.load(f)
+    if not cfg.get("auto_compile", False):
+      return
+    if not os.path.exists(_F4_FW_PATH):
+      cloudlog.info("F4 firmware missing, auto-compiling via panda/F4/build.sh...")
+      result = subprocess.run(["bash", _F4_BUILD_SH], capture_output=True, text=True)
+      if result.returncode != 0:
+        cloudlog.error(f"F4 auto-compile failed:\n{result.stderr}")
+      else:
+        cloudlog.info("F4 auto-compile complete")
+  except Exception:
+    cloudlog.exception("f4_auto_compile_if_needed failed")
+
+
+def get_expected_signature(panda=None) -> bytes:
+  # C3_F4_PANDA: F4/DOS panda has its own firmware file, H7 otherwise
+  if panda is not None and panda.get_type() in Panda.DEPRECATED_DEVICES:
+    fn = os.path.join(FW_PATH, McuType.F4.config.app_fn)
+  else:
+    fn = os.path.join(FW_PATH, McuType.H7.config.app_fn)
   return Panda.get_signature_from_firmware(fn)
 
 def flash_panda(panda_serial: str):
   panda = Panda(panda_serial)
 
   # skip flashing if the detected panda is not supported
-  if panda.get_type() not in Panda.SUPPORTED_DEVICES:
+  # C3_F4_PANDA: F4/DOS is in DEPRECATED_DEVICES, not SUPPORTED_DEVICES
+  if panda.get_type() not in Panda.SUPPORTED_DEVICES + Panda.DEPRECATED_DEVICES:
     cloudlog.warning(f"Panda {panda_serial} is not supported (hw_type: {panda.get_type()}), skipping flash...")
     panda.close()
     return
 
-  fw_signature = get_expected_signature()
+  fw_signature = get_expected_signature(panda)  # C3_F4_PANDA
   internal_panda = panda.is_internal()
 
   panda_version = "bootstub" if panda.bootstub else panda.get_version()
@@ -88,6 +118,9 @@ def main() -> None:
   process = None
   do_exit = False
   signal.signal(signal.SIGINT, signal_handler)
+
+  # C3_F4_PANDA: build F4 firmware on first boot if auto_compile is set in panda/F4/config.json
+  f4_auto_compile_if_needed()
 
   # check health for lost heartbeat
   try:

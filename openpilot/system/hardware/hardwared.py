@@ -154,6 +154,12 @@ def hardware_thread(end_event, hw_queue) -> None:
   pm = messaging.PubMaster(['deviceState'])
   sm = messaging.SubMaster(["peripheralState", "gpsLocationExternal", "selfdriveState", "pandaStates"], poll="pandaStates")
 
+  # C3_IGNITION_CAN: Tesla pre-AP ignition via 0x348 (GTW_status) byte0 bit0, as a
+  # python-side fallback to the F4 panda's own 0x368 DI_state detection.
+  tesla_ign_can = False
+  tesla_ign_last_ts = float("inf")
+  tesla_can_sock = messaging.sub_sock("can", timeout=0)
+
   count = 0
 
   onroad_conditions: dict[str, bool] = {
@@ -212,10 +218,22 @@ def hardware_thread(end_event, hw_queue) -> None:
       offroad_cycle_count = sm.frame
     onroad_conditions["not_onroad_cycle"] = (sm.frame - offroad_cycle_count) >= ONROAD_CYCLE_TIME * SERVICE_LIST['pandaStates'].frequency
 
+    # C3_IGNITION_CAN: drain raw can socket, look for 0x348 (GTW_status) byte0 bit0
+    now = time.monotonic()
+    for batch in messaging.drain_sock(tesla_can_sock):
+      for m in batch.can:
+        if m.address == 0x348 and m.src in (0, 1) and len(m.dat) >= 8:
+          tesla_ign_can = bool(m.dat[0] & 0x1)
+          tesla_ign_last_ts = now
+          break
+    if tesla_ign_last_ts != float("inf") and now - tesla_ign_last_ts > 2.0:
+      tesla_ign_can = False
+
     if sm.updated['pandaStates'] and len(pandaStates) > 0:
 
       # Set ignition based on any panda connected
-      onroad_conditions["ignition"] = ignition_from_panda_states(pandaStates)
+      # C3_IGNITION_CAN: OR in the Tesla pre-AP 0x348 fallback
+      onroad_conditions["ignition"] = ignition_from_panda_states(pandaStates) or tesla_ign_can
 
       pandaState = pandaStates[0]
 

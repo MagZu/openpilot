@@ -29,6 +29,12 @@ function agnos_init {
 }
 
 function launch {
+  # C3_SETUP: run first-time setup on a fresh install
+  if [ ! -f /data/c3_first_run ]; then
+    echo "C3: running first-time setup..."
+    bash "${DIR}/setup_c3_preap.sh"
+  fi
+
   # Remove orphaned git lock if it exists on boot
   [ -f "$DIR/.git/index.lock" ] && rm -f $DIR/.git/index.lock
 
@@ -68,7 +74,8 @@ function launch {
 
   # handle pythonpath
   ln -sfn $(pwd) /data/pythonpath
-  export PYTHONPATH="$PWD"
+  # C3_DEPS: c3_third_party first — comma-deps-* wheels AGNOS 12.6 does not ship (see setup_c3_preap.sh)
+  export PYTHONPATH="$PWD/c3_third_party:$PWD"
 
   # submodule package symlinks for PYTHONPATH imports on device.
   # on PC these come from editable installs via pyproject.toml / uv.
