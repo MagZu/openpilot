@@ -432,12 +432,19 @@ struct CarControlSP @0xa5cd762cd951a455 {
     laneWidth @1 :Float32;
     leftLaneProb @2 :Float32;
     rightLaneProb @3 :Float32;
+    # Outer lane lines (laneLineProbs 0 and 3), i.e. the adjacent-lane
+    # boundaries -- not road edges, despite the name. These drive lane-change
+    # availability. Road edges are the roadEdgeStd fields below.
     leftEdgeProb @4 :Float32;
     rightEdgeProb @5 :Float32;
     c0 @6 :Float32;
     c1 @7 :Float32;
     c2 @8 :Float32;
     c3 @9 :Float32;
+    # modelV2 roadEdgeStds. Lower is more confident; the car layer thresholds
+    # these to draw the cluster's dedicated road-edge line type.
+    leftRoadEdgeStd @10 :Float32;
+    rightRoadEdgeStd @11 :Float32;
   }
 
 

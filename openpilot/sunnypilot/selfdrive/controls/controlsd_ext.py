@@ -21,6 +21,11 @@ from openpilot.sunnypilot.selfdrive.controls.lib.blinker_pause_lateral import Bl
 from openpilot.sunnypilot.selfdrive.controls.lib.latcontrol_torque_v0 import LatControlTorque as LatControlTorqueV0
 
 
+# Sentinel std for "no road edge here", well above any threshold the car layer
+# uses. 0.0 would read as maximum confidence.
+ROAD_EDGE_STD_INVALID = 99.0
+
+
 class ControlsExt(ModelStateBase):
   def __init__(self, CP: structs.CarParams, params: Params):
     ModelStateBase.__init__(self)
@@ -124,6 +129,16 @@ class ControlsExt(ModelStateBase):
     lanes.rightLaneProb = float(probs[2])
     lanes.leftEdgeProb = float(probs[0])
     lanes.rightEdgeProb = float(probs[3])
+
+    # Road edges are separate from the lane lines above: the cluster has its own
+    # line type for them, used where there is no painted marking to draw.
+    edge_stds = md.roadEdgeStds
+    if len(edge_stds) >= 2:
+      lanes.leftRoadEdgeStd = float(edge_stds[0])
+      lanes.rightRoadEdgeStd = float(edge_stds[1])
+    else:
+      lanes.leftRoadEdgeStd = ROAD_EDGE_STD_INVALID
+      lanes.rightRoadEdgeStd = ROAD_EDGE_STD_INVALID
     # c1 is suppressed: the cluster derives heading from the path itself, and
     # feeding it here double-counts and skews the drawn lane.
     lanes.c0 = float(coefs[3])
